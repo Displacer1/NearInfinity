@@ -1,10 +1,12 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.search;
 
 import java.awt.Component;
+import java.io.BufferedReader;
+import java.io.StringReader;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -21,6 +23,7 @@ import org.infinity.resource.bcs.BcsResource;
 import org.infinity.resource.bcs.Compiler;
 import org.infinity.resource.bcs.Decompiler;
 import org.infinity.resource.bcs.ScriptType;
+import org.infinity.resource.cre.CreResource;
 import org.infinity.resource.dlg.AbstractCode;
 import org.infinity.resource.dlg.Action;
 import org.infinity.resource.dlg.DlgResource;
@@ -34,19 +37,32 @@ import org.infinity.resource.text.PlainTextResource;
 
 public final class ReferenceSearcher extends AbstractReferenceSearcher
 {
+  /** Optional alternate name to search for. */
+  private String creDeathVar;
+
   public ReferenceSearcher(ResourceEntry targetEntry, Component parent)
   {
-    super(targetEntry, AbstractReferenceSearcher.FILE_TYPES, parent);
+    this(targetEntry, AbstractReferenceSearcher.FILE_TYPES, parent);
   }
 
   public ReferenceSearcher(ResourceEntry targetEntry, String[] fileTypes, Component parent)
   {
     super(targetEntry, fileTypes, parent);
-  }
-
-  public ReferenceSearcher(ResourceEntry targetEntry, String[] fileTypes, boolean[] preselect, Component parent)
-  {
-    super(targetEntry, fileTypes, preselect, parent);
+    if (targetEntry != null && "CRE".equalsIgnoreCase(targetEntry.getExtension())) {
+      try {
+        CreResource cre = new CreResource(targetEntry);
+        StructEntry nameEntry = cre.getAttribute(CreResource.CRE_SCRIPT_NAME);
+        if (nameEntry instanceof TextString) {
+          creDeathVar = ((TextString)nameEntry).toString().trim();
+          // ignore specific script names
+          if (creDeathVar.isEmpty() || creDeathVar.equalsIgnoreCase("None")) {
+            creDeathVar = null;
+          }
+        }
+      } catch (Exception e) {
+        e.printStackTrace();
+      }
+    }
   }
 
   @Override
@@ -73,49 +89,45 @@ public final class ReferenceSearcher extends AbstractReferenceSearcher
 
   private void searchDialog(ResourceEntry entry, AbstractStruct dialog)
   {
-    boolean hit = false;
-    for (int i = 0; i < dialog.getFieldCount(); i++) {
-      StructEntry o = dialog.getField(i);
+    final String targetName = targetEntry.getResourceName();
+    for (final StructEntry o : dialog.getFields()) {
       if (o instanceof ResourceRef &&
-          ((ResourceRef)o).getResourceName().equalsIgnoreCase(targetEntry.toString())) {
+          ((ResourceRef)o).getResourceName().equalsIgnoreCase(targetName)) {
         addHit(entry, entry.getSearchString(), o);
       }
       else if (o instanceof AbstractCode) {
-        AbstractCode sourceCode = (AbstractCode)o;
+        final AbstractCode sourceCode = (AbstractCode)o;
         try {
-          Compiler compiler = new Compiler(sourceCode.toString(),
-                                             (sourceCode instanceof Action) ? ScriptType.ACTION :
-                                                                              ScriptType.TRIGGER);
+          final ScriptType type = sourceCode instanceof Action ? ScriptType.ACTION : ScriptType.TRIGGER;
+          final Compiler compiler = new Compiler(sourceCode.getText(), type);
           String code = compiler.getCode();
-          if (compiler.getErrors().size() == 0) {
-            Decompiler decompiler = new Decompiler(code, true);
+          if (compiler.getErrors().isEmpty()) {
+            final Decompiler decompiler = new Decompiler(code, type, true);
             decompiler.setGenerateComments(false);
             decompiler.setGenerateResourcesUsed(true);
-            if (o instanceof Action) {
-              decompiler.setScriptType(ScriptType.ACTION);
-            } else {
-              decompiler.setScriptType(ScriptType.TRIGGER);
+            code = decompiler.decompile();
+
+            // resref match
+            Pattern regName = Pattern.compile("\"" + Pattern.quote(targetEntry.getResourceRef()) + "\"", Pattern.CASE_INSENSITIVE);
+            // script name match
+            Pattern regVar = null;
+            if (creDeathVar != null && !creDeathVar.equalsIgnoreCase(targetEntry.getResourceRef()))
+              regVar = Pattern.compile("\"" + Pattern.quote(creDeathVar) + "\"", Pattern.CASE_INSENSITIVE);
+            // symbolic spell name match
+            String symbol = null;
+            Pattern regSymbol = null;
+            if (targetEntry.getExtension().equalsIgnoreCase("SPL")) {
+              symbol = org.infinity.resource.spl.Viewer.getSymbolicName(targetEntry, false);
+              if (symbol != null && !symbol.isEmpty())
+                regSymbol = Pattern.compile("\\b" + Pattern.quote(symbol) + "\\b");
             }
-            decompiler.decompile();
-            for (final ResourceEntry resourceUsed : decompiler.getResourcesUsed()) {
-              if (targetEntry.toString().equalsIgnoreCase(resourceUsed.toString())) {
-                hit = true;
-                addHit(entry, entry.getSearchString(), sourceCode);
-              } else if (targetEntry == resourceUsed) {
-                // searching for symbolic spell names
-                String s = org.infinity.resource.spl.Viewer.getSymbolicName(targetEntry, false);
-                if (s != null && s.equalsIgnoreCase(resourceUsed.toString())) {
-                  addHit(entry, s, sourceCode);
-                }
-              }
-            }
-            if (!hit && targetEntryName != null) {
-              Pattern p = Pattern.compile("\\b" + targetEntryName + "\\b", Pattern.CASE_INSENSITIVE);
-              Matcher m = p.matcher(code);
-              if (m.find()) {
-                addHit(entry, targetEntryName, sourceCode);
-              }
-            }
+
+            if (decompiler.getResourcesUsed().contains(targetEntry) && regName.matcher(code).find())
+              addHit(entry, entry.getSearchString(), sourceCode);
+            else if (regVar != null && regVar.matcher(code).find())
+              addHit(entry, creDeathVar, sourceCode);
+            else if (regSymbol != null && regSymbol.matcher(code).find())
+              addHit(entry, symbol, sourceCode);
           }
         } catch (Exception e) {
           System.out.println("Exception in " + dialog.getName() + " - " + sourceCode.getName());
@@ -129,10 +141,9 @@ public final class ReferenceSearcher extends AbstractReferenceSearcher
 
   private void searchSavStruct(ResourceEntry entry, ResourceEntry saventry, AbstractStruct struct)
   {
-    for (int i = 0; i < struct.getFieldCount(); i++) {
-      StructEntry o = struct.getField(i);
+    for (final StructEntry o : struct.getFields()) {
       if (o instanceof ResourceRef &&
-          ((ResourceRef)o).getResourceName().equalsIgnoreCase(targetEntry.toString()))
+          ((ResourceRef)o).getResourceName().equalsIgnoreCase(targetEntry.getResourceName()))
         addHit(entry, saventry.toString(), o);
       else if (o instanceof AbstractStruct)
         searchSavStruct(entry, saventry, (AbstractStruct)o);
@@ -142,8 +153,7 @@ public final class ReferenceSearcher extends AbstractReferenceSearcher
   private void searchSave(ResourceEntry entry, SavResource savfile)
   {
     List<? extends ResourceEntry> entries = savfile.getFileHandler().getFileEntries();
-    for (int i = 0; i < entries.size(); i++) {
-      ResourceEntry saventry = entries.get(i);
+    for (final ResourceEntry saventry : entries) {
       Resource resource = ResourceFactory.getResource(saventry);
       if (resource instanceof AbstractStruct)
         searchSavStruct(entry, saventry, (AbstractStruct)resource);
@@ -152,21 +162,35 @@ public final class ReferenceSearcher extends AbstractReferenceSearcher
 
   private void searchScript(ResourceEntry entry, BcsResource bcsfile)
   {
-    boolean hit = false;
     Decompiler decompiler = new Decompiler(bcsfile.getCode(), true);
     decompiler.setGenerateComments(false);
     decompiler.setGenerateResourcesUsed(true);
     try {
       String code = decompiler.decompile();
-      if (decompiler.getResourcesUsed().contains(targetEntry)) {
-        hit = true;
-        addHit(entry, entry.getSearchString(), null);
-      }
-      if (!hit && targetEntryName != null) {
-        Pattern p = Pattern.compile("\\b" + targetEntryName + "\\b", Pattern.CASE_INSENSITIVE);
-        Matcher m = p.matcher(code);
-        if (m.find()) {
-          addHit(entry, targetEntryName, null);
+      boolean resourceExists = decompiler.getResourcesUsed().contains(targetEntry);
+      try (final BufferedReader br = new BufferedReader(new StringReader(code))) {
+        // resref match
+        Pattern regName = Pattern.compile("\"" + Pattern.quote(targetEntry.getResourceRef()) + "\"", Pattern.CASE_INSENSITIVE);
+        // script name match
+        Pattern regVar = null;
+        if (creDeathVar != null && !creDeathVar.equalsIgnoreCase(targetEntry.getResourceRef()))
+          regVar = Pattern.compile("\"" + Pattern.quote(creDeathVar) + "\"", Pattern.CASE_INSENSITIVE);
+        // symbolic spell name match
+        Pattern regSymbol = null;
+        if (targetEntry.getExtension().equalsIgnoreCase("SPL")) {
+          String symbol = org.infinity.resource.spl.Viewer.getSymbolicName(targetEntry, false);
+          if (symbol != null && !symbol.isEmpty())
+            regSymbol = Pattern.compile("\\b" + Pattern.quote(symbol) + "\\b");
+        }
+
+        String line;
+        int lineNr = 0;
+        while ((line = br.readLine()) != null) {
+          lineNr++;
+          if (resourceExists && regName.matcher(line).find() ||
+              regVar != null && regVar.matcher(line).find() ||
+              regSymbol != null && regSymbol.matcher(line).find())
+            addHit(entry, line.trim(), lineNr);
         }
       }
     } catch (Exception e) {
@@ -176,10 +200,10 @@ public final class ReferenceSearcher extends AbstractReferenceSearcher
 
   private void searchStruct(ResourceEntry entry, AbstractStruct struct)
   {
-    for (int i = 0; i < struct.getFieldCount(); i++) {
-      StructEntry o = struct.getField(i);
+    final String name = targetEntry.getResourceName();
+    for (final StructEntry o : struct.getFields()) {
       if (o instanceof ResourceRef &&
-          ((ResourceRef)o).getResourceName().equalsIgnoreCase(targetEntry.toString())) {
+          ((ResourceRef)o).getResourceName().equalsIgnoreCase(name)) {
         addHit(entry, entry.getSearchString(), o);
       } else if (o instanceof ProRef && ((ProRef)o).getSelectedEntry() == targetEntry) {
         addHit(entry, entry.getSearchString(), o);
@@ -189,16 +213,15 @@ public final class ReferenceSearcher extends AbstractReferenceSearcher
     }
 
     // special cases
-    final String keyword = (targetEntry.toString().lastIndexOf('.') >= 0) ?
-        targetEntry.toString().substring(0, targetEntry.toString().lastIndexOf('.')) :
-          targetEntry.toString();
     if (struct instanceof EffResource) {
+      final int p = name.lastIndexOf('.');
+      final String keyword = p >= 0 ? name.substring(0, p) : name;
       // checking resource2/3 fields
       final String[] fieldName = {"Resource 2", "Resource 3"};
-      for (int i = 0; i < fieldName.length; i++) {
-        StructEntry o = struct.getAttribute(fieldName[i]);
+      for (final String field : fieldName) {
+        final StructEntry o = struct.getAttribute(field);
         if (o instanceof TextString) {
-          if (o.toString().equalsIgnoreCase(keyword)) {
+          if (((TextString)o).getText().equalsIgnoreCase(keyword)) {
             addHit(entry, entry.getSearchString(), o);
           }
         }
@@ -244,11 +267,12 @@ public final class ReferenceSearcher extends AbstractReferenceSearcher
 
   private void searchTis(ResourceEntry entry, TisResource tis)
   {
+    final String name = getTargetEntry().getResourceName();
     Pattern pGeneric = Pattern.compile("MOS[0-9]{4,5}\\.PVRZ$", Pattern.CASE_INSENSITIVE);
     Pattern pArea = Pattern.compile("(.)(.{4})(N?)([0-9]{2})\\.PVRZ$", Pattern.CASE_INSENSITIVE);
-    Matcher mGeneric = pGeneric.matcher(getTargetEntry().getResourceName());
+    final Matcher mGeneric = pGeneric.matcher(name);
     if (!mGeneric.find()) {
-      Matcher mArea = pArea.matcher(getTargetEntry().getResourceName());
+      final Matcher mArea = pArea.matcher(name);
       if (mArea.find()) {
         String prefix = mArea.group(1);
         String code = mArea.group(2);
@@ -256,11 +280,11 @@ public final class ReferenceSearcher extends AbstractReferenceSearcher
         String page = mArea.group(4);
         Pattern pTis;
         if (night.isEmpty()) {
-          pTis = Pattern.compile(String.format("%1$s.%2$s\\.TIS$",
+          pTis = Pattern.compile(String.format("%s.%s\\.TIS$",
                                                prefix.toUpperCase(Locale.ENGLISH), code),
                                  Pattern.CASE_INSENSITIVE);
         } else {
-          pTis = Pattern.compile(String.format("%1$s.%2$sN\\.TIS$",
+          pTis = Pattern.compile(String.format("%s.%sN\\.TIS$",
                                                prefix.toUpperCase(Locale.ENGLISH), code),
                                  Pattern.CASE_INSENSITIVE);
         }
@@ -280,23 +304,24 @@ public final class ReferenceSearcher extends AbstractReferenceSearcher
 
   private void searchText(ResourceEntry entry, PlainTextResource text)
   {
-    String name = getTargetEntry().getResourceName();
-    int idx = name.lastIndexOf('.');
-    if (idx > 0) {
-      name = name.substring(0, idx);
-    }
-    Pattern p = Pattern.compile("\\b(AP_|GA_)?" + name + "\\b", Pattern.CASE_INSENSITIVE);
-    Matcher m = p.matcher(text.getText());
-    if (m.find()) {
-      addHit(entry, entry.getSearchString(), null);
-    }
-    if (targetEntryName != null && !targetEntryName.equalsIgnoreCase(name)) {
-      p = Pattern.compile("\\b" + targetEntryName + "\\b", Pattern.CASE_INSENSITIVE);
-      m = p.matcher(text.getText());
-      if (m.find()) {
-        addHit(entry, targetEntryName, null);
+    String name = getTargetEntry().getResourceRef();
+    Pattern regName = Pattern.compile("\\b(AP_|GA_)?" + name + "\\b", Pattern.CASE_INSENSITIVE);
+    Pattern regVar = null;
+    if (creDeathVar != null && !creDeathVar.equalsIgnoreCase(name))
+      regVar = Pattern.compile("\\b" + creDeathVar + "\\b", Pattern.CASE_INSENSITIVE);
+
+    try (final BufferedReader br = new BufferedReader(new StringReader(text.getText()))) {
+      String line;
+      int lineNr = 0;
+      while ((line = br.readLine()) != null) {
+        lineNr++;
+        if (regName.matcher(line).find() ||
+            regVar != null && regVar.matcher(line).find()) {
+          addHit(entry, line.trim(), lineNr);
+        }
       }
+    } catch (Exception e) {
+      e.printStackTrace();
     }
   }
 }
-

@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.are.viewer;
@@ -9,10 +9,9 @@ import java.awt.Point;
 import java.awt.Polygon;
 import java.awt.Rectangle;
 
-import org.infinity.datatype.Bitmap;
-import org.infinity.datatype.DecNumber;
-import org.infinity.datatype.HexNumber;
-import org.infinity.datatype.TextString;
+import org.infinity.datatype.IsNumeric;
+import org.infinity.datatype.IsTextual;
+import org.infinity.datatype.ResourceRef;
 import org.infinity.gui.layeritem.AbstractLayerItem;
 import org.infinity.gui.layeritem.ShapedLayerItem;
 import org.infinity.resource.Viewable;
@@ -25,39 +24,61 @@ import org.infinity.resource.vertex.Vertex;
  */
 public class LayerObjectRegion extends LayerObject
 {
-  private static final String[] Type = {"Proximity trigger", "Info point", "Travel region"};
-  private static final Color[] Color = {new Color(0xFF400000, true), new Color(0xFF400000, true),
-                                        new Color(0xC0800000, true), new Color(0xC0C00000, true)};
+  private static final Color[][] COLOR = {
+    {new Color(0xFF400000, true), new Color(0xFF400000, true), new Color(0xC0800000, true), new Color(0xC0C00000, true)},
+    {new Color(0xFF400000, true), new Color(0xFF400000, true), new Color(0xC0804040, true), new Color(0xC0C06060, true)},
+    {new Color(0xFF400000, true), new Color(0xFF400000, true), new Color(0xC0800040, true), new Color(0xC0C00060, true)},
+  };
 
   private final ITEPoint region;
   private final Point location = new Point();
 
-  private ShapedLayerItem item;
+  private final ShapedLayerItem item;
   private Point[] shapeCoords;
 
   public LayerObjectRegion(AreResource parent, ITEPoint region)
   {
-    super(ViewerConstants.RESOURCE_ARE, "Region", ITEPoint.class, parent);
+    super("Region", ITEPoint.class, parent);
     this.region = region;
-    init();
+    String msg = null;
+    int type = 0;
+    try {
+      type = ((IsNumeric)region.getAttribute(ITEPoint.ARE_TRIGGER_TYPE)).getValue();
+      if (type < 0) type = 0; else if (type >= ITEPoint.s_type.length) type = ITEPoint.s_type.length - 1;
+
+      final IsTextual info = (IsTextual)region.getAttribute(ITEPoint.ARE_TRIGGER_INFO_POINT_TEXT);
+      msg = String.format("%s (%s) %s\n%s",
+                          region.getAttribute(ITEPoint.ARE_TRIGGER_NAME).toString(),
+                          ITEPoint.s_type[type], getAttributes(),
+                          // For "1 - Info point" show description
+                          type == 1 && info != null ? info.getText() : "");
+      final int vNum = ((IsNumeric)region.getAttribute(ITEPoint.ARE_TRIGGER_NUM_VERTICES)).getValue();
+      final int vOfs = ((IsNumeric)parent.getAttribute(AreResource.ARE_OFFSET_VERTICES)).getValue();
+      shapeCoords = loadVertices(region, vOfs, 0, vNum, Vertex.class);
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+    final Polygon poly = createPolygon(shapeCoords, 1.0);
+    final Rectangle bounds = normalizePolygon(poly);
+
+    int colorType = Settings.UseColorShades ? type : 0;
+    location.x = bounds.x; location.y = bounds.y;
+    item = new ShapedLayerItem(region, msg, poly);
+    item.setName(getCategory());
+    item.setStrokeColor(AbstractLayerItem.ItemState.NORMAL, COLOR[colorType][0]);
+    item.setStrokeColor(AbstractLayerItem.ItemState.HIGHLIGHTED, COLOR[colorType][1]);
+    item.setFillColor(AbstractLayerItem.ItemState.NORMAL, COLOR[colorType][2]);
+    item.setFillColor(AbstractLayerItem.ItemState.HIGHLIGHTED, COLOR[colorType][3]);
+    item.setStroked(true);
+    item.setFilled(true);
+    item.setVisible(isVisible());
   }
 
+  //<editor-fold defaultstate="collapsed" desc="LayerObject">
   @Override
   public Viewable getViewable()
   {
     return region;
-  }
-
-  @Override
-  public Viewable[] getViewables()
-  {
-    return new Viewable[]{region};
-  }
-
-  @Override
-  public AbstractLayerItem getLayerItem()
-  {
-    return item;
   }
 
   @Override
@@ -73,12 +94,6 @@ public class LayerObjectRegion extends LayerObject
   }
 
   @Override
-  public void reload()
-  {
-    init();
-  }
-
-  @Override
   public void update(double zoomFactor)
   {
     if (item != null) {
@@ -89,59 +104,33 @@ public class LayerObjectRegion extends LayerObject
       item.setShape(poly);
     }
   }
+  //</editor-fold>
 
-  @Override
-  public Point getMapLocation()
+  private String getAttributes()
   {
-    return location;
-  }
+    final StringBuilder sb = new StringBuilder();
+    sb.append('[');
 
-  @Override
-  public Point[] getMapLocations()
-  {
-    return new Point[]{location};
-  }
+    addTrappedDesc(sb, region,
+                   ITEPoint.ARE_TRIGGER_TRAPPED,
+                   ITEPoint.ARE_TRIGGER_TRAP_REMOVAL_DIFFICULTY,
+                   ITEPoint.ARE_TRIGGER_SCRIPT);
 
-  private void init()
-  {
-    if (region != null) {
-      shapeCoords = null;
-      String msg = "";
-      Polygon poly = null;
-      Rectangle bounds = null;
-      try {
-        int type = ((Bitmap)region.getAttribute(ITEPoint.ARE_TRIGGER_TYPE)).getValue();
-        if (type < 0) type = 0; else if (type >= Type.length) type = Type.length - 1;
-        msg = String.format("%1$s (%2$s)", ((TextString)region.getAttribute(ITEPoint.ARE_TRIGGER_NAME)).toString(), Type[type]);
-        int vNum = ((DecNumber)region.getAttribute(ITEPoint.ARE_TRIGGER_NUM_VERTICES)).getValue();
-        int vOfs = ((HexNumber)getParentStructure().getAttribute(AreResource.ARE_OFFSET_VERTICES)).getValue();
-        shapeCoords = loadVertices(region, vOfs, 0, vNum, Vertex.class);
-        poly = createPolygon(shapeCoords, 1.0);
-        bounds = normalizePolygon(poly);
-      } catch (Exception e) {
-        e.printStackTrace();
-        if (shapeCoords == null) {
-          shapeCoords = new Point[0];
-        }
-        if (poly == null) {
-          poly = new Polygon();
-        }
-        if (bounds == null) {
-          bounds = new Rectangle();
-        }
+    final ResourceRef dest = (ResourceRef)region.getAttribute(ITEPoint.ARE_TRIGGER_DESTINATION_AREA);
+    if (dest != null && !dest.isEmpty()) {
+      if (sb.length() > 1) sb.append(", ");
+
+      final AreResource self = (AreResource)getParentStructure();
+      final boolean isSelf = dest.getResourceName().equalsIgnoreCase(self.getName());
+      sb.append("Destination: ").append(isSelf ? "(this area)" : dest);
+      String entrance = ((IsTextual)region.getAttribute(ITEPoint.ARE_TRIGGER_ENTRANCE_NAME)).getText();
+      if (!entrance.isEmpty() && !entrance.equalsIgnoreCase("NONE")) {
+        sb.append('>').append(entrance);
       }
-
-      location.x = bounds.x; location.y = bounds.y;
-      item = new ShapedLayerItem(location, region, msg, poly);
-      item.setName(getCategory());
-      item.setToolTipText(msg);
-      item.setStrokeColor(AbstractLayerItem.ItemState.NORMAL, Color[0]);
-      item.setStrokeColor(AbstractLayerItem.ItemState.HIGHLIGHTED, Color[1]);
-      item.setFillColor(AbstractLayerItem.ItemState.NORMAL, Color[2]);
-      item.setFillColor(AbstractLayerItem.ItemState.HIGHLIGHTED, Color[3]);
-      item.setStroked(true);
-      item.setFilled(true);
-      item.setVisible(isVisible());
     }
+
+    if (sb.length() == 1) sb.append("No flags");
+    sb.append(']');
+    return sb.toString();
   }
 }

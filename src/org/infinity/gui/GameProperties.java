@@ -57,6 +57,7 @@ public final class GameProperties extends ChildFrame implements ActionListener
     RES_TYPES.put(Profile.Key.IS_SUPPORTED_ARE_V10, "ARE V1.0");
     RES_TYPES.put(Profile.Key.IS_SUPPORTED_ARE_V91, "ARE V9.1");
     RES_TYPES.put(Profile.Key.IS_SUPPORTED_BAM_V1, "BAM V1");
+    RES_TYPES.put(Profile.Key.IS_SUPPORTED_BAM_V1_ALPHA, "BAM V1+Alpha");
     RES_TYPES.put(Profile.Key.IS_SUPPORTED_BAMC_V1, "BAMC V1");
     RES_TYPES.put(Profile.Key.IS_SUPPORTED_BAM_V2, "BAM V2");
     RES_TYPES.put(Profile.Key.IS_SUPPORTED_BCS, "BCS");
@@ -212,12 +213,12 @@ public final class GameProperties extends ChildFrame implements ActionListener
       StringBuilder sb = new StringBuilder();
       s = ResourceFactory.autodetectGameLanguage(Profile.getProperty(Profile.Key.GET_GAME_INI_FILE));
       if (s != null) {
-        sb.append(String.format("Autodetect (%1$s)", getLanguageName(s)));
+        sb.append(String.format("Autodetect (%s)", getLanguageName(s)));
       }
       if (languages != null) {
         for (final String lang: languages) {
           if (lang != null && !lang.isEmpty()) {
-            sb.append(String.format(", %1$s", getLanguageName(lang)));
+            sb.append(String.format(", %s", getLanguageName(lang)));
           }
         }
       }

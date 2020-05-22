@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.gui.converter;
@@ -45,7 +45,6 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Vector;
 
@@ -63,6 +62,7 @@ import javax.swing.JDialog;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
@@ -89,6 +89,7 @@ import javax.swing.filechooser.FileNameExtensionFilter;
 import org.infinity.NearInfinity;
 import org.infinity.gui.ButtonPopupMenu;
 import org.infinity.gui.ChildFrame;
+import org.infinity.gui.DataMenuItem;
 import org.infinity.gui.FixedFocusTraversalPolicy;
 import org.infinity.gui.OpenResourceDialog;
 import org.infinity.gui.RenderCanvas;
@@ -101,6 +102,7 @@ import org.infinity.resource.graphics.BamDecoder;
 import org.infinity.resource.graphics.BamV1Decoder;
 import org.infinity.resource.graphics.ColorConvert;
 import org.infinity.resource.graphics.DxtEncoder;
+import org.infinity.resource.graphics.GifSequenceReader;
 import org.infinity.resource.graphics.PseudoBamDecoder;
 import org.infinity.resource.graphics.BamDecoder.BamControl;
 import org.infinity.resource.graphics.PseudoBamDecoder.PseudoBamControl;
@@ -139,6 +141,12 @@ public class ConvertToBam extends ChildFrame
   static final int VERSION_BAMV2 = 1;
   static final String[] BamVersionItems = {"Legacy (v1)", "PVRZ-based (v2)"};
 
+  // Alpha component support for BAM v1
+  static final int ALPHA_AUTO   = 0;
+  static final int ALPHA_ALWAYS = 1;
+  static final int ALPHA_NEVER  = 2;
+  static final String[] UseAlphaItems = {"In EE only", "Always", "Never"};
+
   // Available playback modes for preview
   static final int MODE_CURRENT_CYCLE_ONCE    = 0;
   static final int MODE_CURRENT_CYCLE_LOOPED  = 1;
@@ -165,7 +173,7 @@ public class ConvertToBam extends ChildFrame
   private final PseudoBamDecoder bamDecoder = new PseudoBamDecoder();
   // BamDecoder instance containing the final result of the current BAM structure
   private final PseudoBamDecoder bamDecoderFinal = new PseudoBamDecoder();
-  // Frame image lists (use FRAMELIST_XXX constants for access)
+  // Frame image lists (use BAM_ORIGINAL/BAM_FINAL constants for access)
   private final List<List<PseudoBamFrameEntry>> listFrameEntries = new ArrayList<List<PseudoBamFrameEntry>>(2);
   // Frame entry used for preview in filter tab
   private final PseudoBamFrameEntry entryFilterPreview = new PseudoBamFrameEntry(null, 0, 0);
@@ -183,6 +191,7 @@ public class ConvertToBam extends ChildFrame
   private JMenuItem miFramesAddFiles, miFramesAddResources, miFramesAddFolder, miFramesImportFile,
                     miFramesImportResource, miFramesRemove, miFramesRemoveAll, miFramesDropUnused,
                     miSessionExport, miSessionImport;
+  private JMenu miSessionHistory;
   private ButtonPopupMenu bpmFramesAdd, bpmFramesRemove, bpmSession;
   private JButton bOptions, bConvert, bCancel, bPalette, bVersionHelp, bCompressionHelp;
   private JButton bFramesUp, bFramesDown;
@@ -267,9 +276,11 @@ public class ConvertToBam extends ChildFrame
   public static FileNameExtensionFilter[] getPaletteFilters()
   {
     FileNameExtensionFilter[] filters = new FileNameExtensionFilter[] {
-        new FileNameExtensionFilter("Palette from files (*.bam, *.bmp, *.act, *.pal)", "bam", "bmp", "act", "pal"),
+        new FileNameExtensionFilter("Palette from files (*.bam, *.bmp, *.png, *.act, *.pal)",
+                                    "bam", "bmp", "png", "act", "pal"),
         new FileNameExtensionFilter("Palette from BAM files (*.bam)", "bam"),
         new FileNameExtensionFilter("Palette from BMP files (*.bmp)", "bmp"),
+        new FileNameExtensionFilter("Palette from PNG files (*.png)", "png"),
         new FileNameExtensionFilter("Adobe Color Table files (*.act)", "act"),
         new FileNameExtensionFilter("Microsoft Palette files (*.pal)", "pal"),
     };
@@ -385,14 +396,8 @@ public class ConvertToBam extends ChildFrame
 
   public ConvertToBam()
   {
-    this(null);
-  }
-
-  public ConvertToBam(ResourceEntry entry)
-  {
     super("Convert image sequence to BAM", true);
     init();
-    framesImportBam(entry);
   }
 
   /**
@@ -434,6 +439,12 @@ public class ConvertToBam extends ChildFrame
     return bamOutputFile;
   }
 
+  /** Predefines BAM output file or path. */
+  public void setBamOutput(Path path)
+  {
+    bamOutputFile = path;
+  }
+
   /** Returns whether BAM v1 output is compressed. */
   public boolean isBamV1Compressed()
   {
@@ -441,9 +452,16 @@ public class ConvertToBam extends ChildFrame
   }
 
   /** Returns the threshold used to determine transparent colors. Range: [0, 255]. */
-  public int getTransparencyThreshold()
+  public static int getTransparencyThreshold()
   {
     return (255*BamOptionsDialog.getTransparencyThreshold()) / 100;
+  }
+
+  /** Returns whether alpha channel support is enabled. */
+  public static boolean getUseAlpha()
+  {
+    return (BamOptionsDialog.getUseAlpha() == ALPHA_ALWAYS) ||
+           (Profile.isEnhancedEdition() && BamOptionsDialog.getUseAlpha() == ALPHA_AUTO);
   }
 
   /** Returns the start index for PVRZ files used for BAM v2 output. */
@@ -468,6 +486,7 @@ public class ConvertToBam extends ChildFrame
   @Override
   protected boolean windowClosing(boolean forced) throws Exception
   {
+    BamOptionsDialog.saveRecentSessions();
     if (forced || confirmCloseDialog()) {
       clear();
       return true;
@@ -552,7 +571,7 @@ public class ConvertToBam extends ChildFrame
         if (count == 1) {
           msg = "1 unused frame can be dropped. Do you want to continue?";
         } else {
-          msg = String.format("%1$d unused frames can be dropped. Do you want to continue?", count);
+          msg = String.format("%d unused frames can be dropped. Do you want to continue?", count);
         }
         int retVal = JOptionPane.showConfirmDialog(this, msg, "Question", JOptionPane.YES_NO_OPTION,
                                                    JOptionPane.QUESTION_MESSAGE);
@@ -675,6 +694,27 @@ public class ConvertToBam extends ChildFrame
       filterMoveDown();
     } else if (event.getSource() == cbFiltersShowMarker) {
       filterSetPreviewFrame(filterGetPreviewFrameIndex(), false);
+    } else if (event.getSource() instanceof DataMenuItem) {
+      DataMenuItem dmi = (DataMenuItem)event.getSource();
+      if (dmi.getData() instanceof Path) {
+        Path path = (Path)dmi.getData();
+        Exporter importer = new Exporter(this);
+        try {
+          if (importer.importData(path, false)) {
+            if (importer.isFramesSelected() || importer.isCenterSelected()) {
+              updateFramesList();
+            }
+            if (importer.isCyclesSelected()) {
+              updateCyclesList();
+            }
+            if (importer.isFiltersSelected()) {
+              updateFilterList();
+            }
+          }
+        } finally {
+          importer.close();
+        }
+      }
     }
   }
 
@@ -929,11 +969,16 @@ public class ConvertToBam extends ChildFrame
 
     // setting up bottom button bar
     GridBagConstraints c = new GridBagConstraints();
+    initSessionEntries();
     miSessionExport = new JMenuItem("Export session...");
     miSessionExport.addActionListener(this);
     miSessionImport = new JMenuItem("Import session...");
     miSessionImport.addActionListener(this);
-    bpmSession = new ButtonPopupMenu("BAM session", new JMenuItem[]{miSessionExport, miSessionImport});
+    bpmSession = new ButtonPopupMenu("BAM session");
+    bpmSession.addItem(miSessionHistory);
+    bpmSession.getPopupMenu().addSeparator();
+    bpmSession.addItem(miSessionExport);
+    bpmSession.addItem(miSessionImport);
     bpmSession.setToolTipText("Export or import BAM frame, cycle or filter definitions.");
     bpmSession.setIcon(Icons.getIcon(Icons.ICON_ARROW_UP_15));
     bpmSession.setIconTextGap(8);
@@ -992,7 +1037,7 @@ public class ConvertToBam extends ChildFrame
     setVisible(true);
   }
 
-  // Creating panel "Frames"
+  /** Creating panel "Frames". */
   private JPanel createFramesTab()
   {
     GridBagConstraints c = new GridBagConstraints();
@@ -1750,7 +1795,7 @@ public class ConvertToBam extends ChildFrame
   }
 
 
-  // Close the main dialog manually. 'force' overrides the confirmation dialog.
+  /** Close the main dialog manually. 'force' overrides the confirmation dialog. */
   private void hideWindow(boolean force)
   {
     if (force || confirmCloseDialog()) {
@@ -1759,12 +1804,12 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Presents a confirmation dialog if any frames or cycles are present
+  /** Presents a confirmation dialog if any frames or cycles are present. */
   private boolean confirmCloseDialog()
   {
     boolean isEmpty = (modelFrames.isEmpty() && modelCycles.isEmpty());
     if (!isEmpty) {
-      String msg = String.format("%1$d frame(s) and %2$d cycle(s) will be discarded.\n" +
+      String msg = String.format("%d frame(s) and %d cycle(s) will be discarded.\n" +
                                  "Do you really want to close the dialog?",
                                  modelFrames.getSize(), modelCycles.getSize());
       if (JOptionPane.YES_OPTION == JOptionPane.showConfirmDialog(this, msg, "Close dialog",
@@ -1775,7 +1820,7 @@ public class ConvertToBam extends ChildFrame
     return isEmpty;
   }
 
-  // resets the dialog state
+  /** Resets the dialog state. */
   private void clear()
   {
     previewStop();
@@ -1787,7 +1832,7 @@ public class ConvertToBam extends ChildFrame
   }
 
 
-  // Updates the tab component state
+  /** Updates the tab component state. */
   private void updateStatus()
   {
     boolean isReady = (!modelFrames.isEmpty() && !modelCycles.isEmpty());
@@ -1804,7 +1849,7 @@ public class ConvertToBam extends ChildFrame
     tpMain.setEnabledAt(TAB_FILTERS, showTabs);
   }
 
-  // Updates relevant components to reflect the current state of the global frames list
+  /** Updates relevant components to reflect the current state of the global frames list. */
   private void updateFramesList()
   {
     // updating button states
@@ -1825,7 +1870,7 @@ public class ConvertToBam extends ChildFrame
     updateStatus();
   }
 
-  // Updates relevant components to reflect the current state of the cycles list
+  /** Updates relevant components to reflect the current state of the cycles list. */
   private void updateCyclesList()
   {
     listCycles.repaint();
@@ -1856,7 +1901,7 @@ public class ConvertToBam extends ChildFrame
     updateStatus();
   }
 
-  // Updates relevant components to reflect the current state of the selected cycle
+  /** Updates relevant components to reflect the current state of the selected cycle. */
   private void updateCurrentCycle()
   {
     // updating button states
@@ -1876,7 +1921,7 @@ public class ConvertToBam extends ChildFrame
     initCurrentCycle(new Pair<Integer>(cycleIdx, cycleIdx));
   }
 
-  // Initializes the "Current cycle" section of the Cycles tab
+  /** Initializes the "Current cycle" section of the Cycles tab. */
   private void initCurrentCycle(Pair<Integer> cycleIndices)
   {
     if (cycleIndices != null) {
@@ -1891,7 +1936,7 @@ public class ConvertToBam extends ChildFrame
         listCurCycle.setEnabled(true);
 
         // updating group box title
-        pCurrentCycle.setBorder(BorderFactory.createTitledBorder(String.format("Cycle %1$d ", cycleIdx)));
+        pCurrentCycle.setBorder(BorderFactory.createTitledBorder(String.format("Cycle %d ", cycleIdx)));
 
         listFramesAvail.setSelectedIndices(new int[]{});
 
@@ -1920,7 +1965,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Updates relevant components to reflect the current frames list selection in the Frames tab
+  /** Updates relevant components to reflect the current frames list selection in the Frames tab. */
   private void updateFrameInfo(int[] indices)
   {
     if (indices != null && indices.length > 0) {
@@ -1929,7 +1974,7 @@ public class ConvertToBam extends ChildFrame
       tfFrameHeight.setEnabled(true);
       tfFrameCenterX.setEnabled(true);
       tfFrameCenterY.setEnabled(true);
-      cbCompressFrame.setEnabled(true);
+      cbCompressFrame.setEnabled(isBamV1Selected());
 
       // evaluating data
       PseudoBamFrameEntry fe = getBamDecoder(BAM_ORIGINAL).getFrameInfo(indices[0]);
@@ -1960,9 +2005,9 @@ public class ConvertToBam extends ChildFrame
       // setting frame info
       String title = null;
       if (indices.length > 1) {
-        title = String.format("%1$d frames selected ", indices.length);
+        title = String.format("%d frames selected ", indices.length);
       } else {
-        title = String.format("Frame %1$d ", indices[0]);
+        title = String.format("Frame %d ", indices[0]);
       }
       pFramesCurFrame.setBorder(BorderFactory.createTitledBorder(title));
       tfFrameWidth.setText(changedWidth ? "" : Integer.toString(initialWidth));
@@ -1987,7 +2032,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Updates the specified quick preview section
+  /** Updates the specified quick preview section. */
   private void updateQuickPreview(RenderCanvas target, int[] indices, boolean showCenter)
   {
     if (target != null) {
@@ -2059,7 +2104,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Updates the preview tab
+  /** Updates the preview tab. */
   private void updatePreview()
   {
     previewPrepare(false);
@@ -2070,15 +2115,15 @@ public class ConvertToBam extends ChildFrame
     bPreviewCycleNext.setEnabled(bamControlPreview.cycleGet() < bamControlPreview.cycleCount() - 1);
     bPreviewFramePrev.setEnabled(bamControlPreview.cycleGetFrameIndex() > 0);
     bPreviewFrameNext.setEnabled(bamControlPreview.cycleGetFrameIndex() < bamControlPreview.cycleFrameCount() - 1);
-    lPreviewCycle.setText(String.format("Cycle: %1$d/%2$d",
+    lPreviewCycle.setText(String.format("Cycle: %d/%d",
                                         bamControlPreview.cycleGet(), bamControlPreview.cycleCount() - 1));
-    lPreviewFrame.setText(String.format("Frame: %1$d/%2$d",
+    lPreviewFrame.setText(String.format("Frame: %d/%d",
                                         bamControlPreview.cycleGetFrameIndex(),
                                         bamControlPreview.cycleFrameCount() - 1));
   }
 
 
-  // Updates relevant components to reflect the current state of the filters list
+  /** Updates relevant components to reflect the current state of the filters list. */
   private void updateFilterList()
   {
     // updating button states
@@ -2093,10 +2138,10 @@ public class ConvertToBam extends ChildFrame
     filterSetPreviewFrame(filterGetPreviewFrameIndex(), true);
   }
 
-  // Updates the filter info box
+  /** Updates the filter info box. */
   private void updateFilterInfo()
   {
-    final String fmt = "Name: %1$s\n\nDescription:\n%2$s";
+    final String fmt = "Name: %s\n\nDescription:\n%s";
     int idx = listFilters.getSelectedIndex();
     if (idx >= 0) {
       BamFilterBase filter = modelFilters.get(idx);
@@ -2106,7 +2151,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Updates the filter settings section with the controls of the currently selected filter
+  /** Updates the filter settings section with the controls of the currently selected filter. */
   private void updateFilterControls()
   {
     pFiltersSettings.removeAll();
@@ -2122,7 +2167,7 @@ public class ConvertToBam extends ChildFrame
     pFiltersSettings.repaint();
   }
 
-  // Adjusts cycle indices after adding frames to the global frames list
+  /** Adjusts cycle indices after adding frames to the global frames list. */
   private void updateCyclesAddedFrames(int[] indices)
   {
     if (indices != null && indices.length > 0) {
@@ -2142,7 +2187,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Adjusts cycle indices after removing frames from the global frames list
+  /** Adjusts cycle indices after removing frames from the global frames list. */
   private void updateCyclesRemovedFrames(int[] indices)
   {
     if (indices != null && indices.length > 0) {
@@ -2168,7 +2213,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Adjusts cycle indices after moving frames within the global frames list
+  /** Adjusts cycle indices after moving frames within the global frames list. */
   private void updateCyclesMovedFrames(int index, int shift)
   {
     if (index >= 0 && shift != 0) {
@@ -2188,7 +2233,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Action for "Compress frame"
+  /** Action for "Compress frame". */
   private void framesUpdateCompressFrame()
   {
     int[] indices = listFrames.getSelectedIndices();
@@ -2201,7 +2246,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Evaluates the value in the specified "Center X/Y" text field
+  /** Evaluates the value in the specified "Center X/Y" text field. */
   private void framesValidateCenterValue(JTextField tf)
   {
     if (tf != null) {
@@ -2258,7 +2303,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Action for "Add..."->"Add file(s)...": adds image files to the frames list
+  /** Action for "Add..."->"Add file(s)...": adds image files to the frames list. */
   public void framesAddFiles()
   {
     Path[] files = getOpenFileName(this, "Choose file(s) to add", null, true, getGraphicsFilters(), 0);
@@ -2272,7 +2317,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Action for "Add..."->"Add resource(s)...": adds image resources to the frames list
+  /** Action for "Add..."->"Add resource(s)...": adds image resources to the frames list. */
   public void framesAddResources()
   {
     ResourceEntry[] entries =
@@ -2287,7 +2332,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Called by framesAddLauncher. Can also be called directly. Makes use of a progress monitor if available.
+  /** Called by framesAddLauncher. Can also be called directly. Makes use of a progress monitor if available. */
   public void framesAdd(Path[] files)
   {
     if (files != null) {
@@ -2303,7 +2348,7 @@ public class ConvertToBam extends ChildFrame
   {
     if (entries != null) {
       outputSetModified(true);
-      List<String> skippedFiles = new ArrayList<String>();
+      final List<ResourceEntry> skippedFiles = new ArrayList<>();
       int insertIndex = listFrames.getSelectedIndex();
       int idx = insertIndex;
       if (idx < 0) idx = modelFrames.getSize() - 1;
@@ -2315,12 +2360,12 @@ public class ConvertToBam extends ChildFrame
               // adding remaining files to skip list
               for (int j = i; j < entries.length; j++) {
                 if (entries[j] != null) {
-                  skippedFiles.add(entries[j].toString());
+                  skippedFiles.add(entries[j]);
                 }
               }
               break;
             }
-            advanceProgressMonitor(String.format("Adding file %1$d/%2$d", i+1, entries.length));
+            advanceProgressMonitor(String.format("Adding file %d/%d", i+1, entries.length));
           }
           // adding files to global frames list
           if (entries[i] != null) {
@@ -2329,13 +2374,13 @@ public class ConvertToBam extends ChildFrame
               if (decoder != null) {
                 idx += decoder.frameCount();
               } else {
-                skippedFiles.add(entries[i].toString());
+                skippedFiles.add(entries[i]);
               }
             } else {
               if (framesAddImage(idx + 1, entries[i], -1)) {
                 idx++;
               } else {
-                skippedFiles.add(entries[i].toString());
+                skippedFiles.add(entries[i]);
               }
             }
           }
@@ -2359,18 +2404,19 @@ public class ConvertToBam extends ChildFrame
       listFrames.requestFocusInWindow();
 
       // error handling
-      if (!skippedFiles.isEmpty()) {
-        StringBuilder sb = new StringBuilder();
-        if (skippedFiles.size() == 1) {
-          sb.append(String.format("%1$d file has been skipped:\n", skippedFiles.size()));
+      final int size = skippedFiles.size();
+      if (size != 0) {
+        final StringBuilder sb = new StringBuilder();
+        if (size == 1) {
+          sb.append("1 file has been skipped:\n");
         } else {
-          sb.append(String.format("%1$d files have been skipped:\n", skippedFiles.size()));
+          sb.append(String.format("%d files have been skipped:\n", size));
         }
-        int count = Math.min(5, skippedFiles.size());
+        final int count = Math.min(5, size);
         for (int i = 0; i < count; i++) {
-          sb.append(String.format("  - %1$s\n", skippedFiles.get(i)));
+          sb.append(String.format("  - %s\n", skippedFiles.get(i)));
         }
-        if (skippedFiles.size() > 5) {
+        if (size > 5) {
           sb.append("  - ...\n");
         }
         JOptionPane.showMessageDialog(this, sb.toString(), "Error", JOptionPane.ERROR_MESSAGE);
@@ -2378,15 +2424,21 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Specific: Adds the specified source BAM to the frames list.
-  // Returns the BamDecoder object of the source BAM, or null on error
+  /**
+   * Specific: Adds the specified source BAM to the frames list.
+   *
+   * @return the BamDecoder object of the source BAM, or {@code null} on error
+   */
   public BamDecoder framesAddBam(int listIndex, Path file)
   {
     return framesAddBam(listIndex, new FileResourceEntry(file));
   }
 
-  // Specific: Adds the specified source BAM to the frames list.
-  // Returns the BamDecoder object of the source BAM, or null on error
+  /**
+   * Specific: Adds the specified source BAM to the frames list.
+   *
+   * @return the BamDecoder object of the source BAM, or {@code null on error
+   */
   public BamDecoder framesAddBam(int listIndex, ResourceEntry entry)
   {
     if (listIndex >= 0 && entry != null && BamDecoder.isValid(entry)) {
@@ -2399,7 +2451,7 @@ public class ConvertToBam extends ChildFrame
       if (decoder instanceof BamV1Decoder) {
         int[] palette = ((BamV1Decoder.BamV1Control)control).getPalette();
         int transColor = ((BamV1Decoder.BamV1Control)control).getTransparencyIndex();
-        cm = new IndexColorModel(8, 256, palette, 0, false, transColor, DataBuffer.TYPE_BYTE);
+        cm = new IndexColorModel(8, 256, palette, 0, getUseAlpha(), transColor, DataBuffer.TYPE_BYTE);
       }
 
       for (int j = 0; j < decoder.frameCount(); j++) {
@@ -2412,7 +2464,7 @@ public class ConvertToBam extends ChildFrame
     return null;
   }
 
-  // Adds a single BAM frame to the frame list
+  /** Adds a single BAM frame to the frame list. */
   private int framesAddBamFrame(int listIndex, BamDecoder decoder, BamDecoder.BamControl control,
                                 int frameIndex, IndexColorModel cm)
   {
@@ -2427,7 +2479,7 @@ public class ConvertToBam extends ChildFrame
       if (cm == null && decoder instanceof BamV1Decoder) {
         int[] palette = ((BamV1Decoder.BamV1Control)control).getPalette();
         int transColor = ((BamV1Decoder.BamV1Control)control).getTransparencyIndex();
-        cm = new IndexColorModel(8, 256, palette, 0, false, transColor, DataBuffer.TYPE_BYTE);
+        cm = new IndexColorModel(8, 256, palette, 0, getUseAlpha(), transColor, DataBuffer.TYPE_BYTE);
       }
 
       // adding frame
@@ -2498,12 +2550,29 @@ public class ConvertToBam extends ChildFrame
     if (listIndex >= 0 && entry != null) {
       try {
         InputStream is = entry.getResourceDataAsStream();
-        ImageReader reader = (ImageReader)ImageIO.getImageReadersBySuffix(entry.getExtension()).next();
-        reader.setInput(ImageIO.createImageInputStream(is), false);
-        int numFrames = reader.getNumImages(true);
-        retVal = (numFrames > 0);
-        for (int frameIdx = 0, curFrameIdx = 0; frameIdx < numFrames; frameIdx++) {
-          BufferedImage image = reader.read(frameIdx);
+        BufferedImage[] images;
+        if (entry.getExtension().equalsIgnoreCase("gif")) {
+          // Potential GIF animation
+          GifSequenceReader reader = new GifSequenceReader(ImageIO.createImageInputStream(is));
+          reader.decodeAll();
+          images = new BufferedImage[reader.getFrameCount()];
+          for (int i = 0; i < images.length; i++) {
+            images[i] = reader.getFrame(i).getRenderedImage();
+          }
+        } else {
+          // Everything else
+          ImageReader reader = (ImageReader)ImageIO.getImageReadersBySuffix(entry.getExtension()).next();
+          reader.setInput(ImageIO.createImageInputStream(is), false);
+          int numFrames = reader.getNumImages(true);
+          images = new BufferedImage[numFrames];
+          for (int i = 0; i < images.length; i++) {
+            images[i] = reader.read(i);
+          }
+        }
+        retVal = (images.length > 0);
+
+        for (int frameIdx = 0, curFrameIdx = 0; frameIdx < images.length; frameIdx++) {
+          BufferedImage image = images[frameIdx];
           if (image == null) {
             retVal = false;
             break;
@@ -2515,34 +2584,46 @@ public class ConvertToBam extends ChildFrame
 
           // transparency detection for paletted images
           if (image.getType() == BufferedImage.TYPE_BYTE_INDEXED) {
-            if (!((IndexColorModel)image.getColorModel()).hasAlpha()) {
-              int[] cmap = new int[256];
-              int transIndex = -1;
-              IndexColorModel srcCm = (IndexColorModel)image.getColorModel();
-              int numColors = 1 << srcCm.getPixelSize();
-              for (int i = 0; i < numColors; i++) {
-                cmap[i] = (srcCm.getRed(i) << 16) | (srcCm.getGreen(i) << 8) | srcCm.getBlue(i);
-                // marking first occurence of "Green" as transparent
-                if (transIndex < 0 && cmap[i] == 0x0000ff00) {
+            boolean hasAlpha = ((IndexColorModel)image.getColorModel()).hasAlpha();
+            int[] cmap = new int[256];
+            int transIndex = -1;
+            IndexColorModel srcCm = (IndexColorModel)image.getColorModel();
+            int numColors = Math.min(1 << srcCm.getPixelSize(), cmap.length);
+            int i = 0;
+            for (; i < numColors; i++) {
+              int alpha = hasAlpha ? srcCm.getAlpha(i) : 0xff;
+              cmap[i] = (alpha << 24) |
+                        (srcCm.getRed(i) << 16) |
+                        (srcCm.getGreen(i) << 8) |
+                        srcCm.getBlue(i);
+              // marking first occurence of "Green" as transparent
+              if (transIndex < 0) {
+                if ((cmap[i] & 0xff000000) == 0) {
+                  transIndex = i;
+                  cmap[i] = 0xff00ff00;
+                } else if ((cmap[i] & 0x00ffffff) == 0x0000ff00) {
                   transIndex = i;
                 }
               }
-
-              // fallback to index 0 as transparent color
-              if (transIndex < 0) {
-                transIndex = 0;
-              }
-
-              // Adding transparency to image
-              IndexColorModel cm = new IndexColorModel(8, 256, cmap, 0, false, transIndex, DataBuffer.TYPE_BYTE);
-              BufferedImage dstImage = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_BYTE_INDEXED, cm);
-              byte[] srcBuffer = ((DataBufferByte)image.getRaster().getDataBuffer()).getData();
-              byte[] dstBuffer = ((DataBufferByte)dstImage.getRaster().getDataBuffer()).getData();
-              System.arraycopy(srcBuffer, 0, dstBuffer, 0, srcBuffer.length);
-              srcBuffer = null; dstBuffer = null;
-              cmap = null;
-              image = dstImage;
             }
+            for (; i < cmap.length; i++) {
+              cmap[i] = 0xff000000;
+            }
+
+            // fallback to index 0 as transparent color
+            if (transIndex < 0) {
+              transIndex = 0;
+            }
+
+            // Adding transparency to image
+            IndexColorModel cm = new IndexColorModel(8, 256, cmap, 0, getUseAlpha(), transIndex, DataBuffer.TYPE_BYTE);
+            BufferedImage dstImage = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_BYTE_INDEXED, cm);
+            byte[] srcBuffer = ((DataBufferByte)image.getRaster().getDataBuffer()).getData();
+            byte[] dstBuffer = ((DataBufferByte)dstImage.getRaster().getDataBuffer()).getData();
+            System.arraycopy(srcBuffer, 0, dstBuffer, 0, srcBuffer.length);
+            srcBuffer = null; dstBuffer = null;
+            cmap = null;
+            image = dstImage;
           }
 
           modelFrames.insert(listIndex + curFrameIdx, image, new Point());
@@ -2554,7 +2635,7 @@ public class ConvertToBam extends ChildFrame
             fe2.setOption(BAM_FRAME_OPTION_PATH, BAM_FRAME_PATH_BIFF + entry.getResourceName());
           }
           fe2.setOption(BAM_FRAME_OPTION_SOURCE_INDEX, Integer.valueOf(frameIdx));
-          if (numFrames > 1) {
+          if (images.length > 1) {
             fe2.setOption(PseudoBamDecoder.OPTION_STRING_LABEL, entry.getResourceName() + ":" + frameIdx);
           } else {
             fe2.setOption(PseudoBamDecoder.OPTION_STRING_LABEL, entry.getResourceName());
@@ -2569,7 +2650,7 @@ public class ConvertToBam extends ChildFrame
     return retVal;
   }
 
-  // Action for "Import BAM file...": loads a complete frames/cycles structure
+  /** Action for "Import BAM file...": loads a complete frames/cycles structure. */
   public void framesImportBamFile()
   {
     Path[] files = getOpenFileName(this, "Import BAM file", null, false,
@@ -2584,7 +2665,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Action for "Import BAM resource...": loads a complete frames/cycles structure
+  /** Action for "Import BAM resource...": loads a complete frames/cycles structure. */
   public void framesImportBamResource()
   {
     ResourceEntry[] entries =
@@ -2599,13 +2680,13 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Specific: Loads the whole frames/cycles structure from the specified BAM file
+  /** Specific: Loads the whole frames/cycles structure from the specified BAM file. */
   public void framesImportBam(Path file)
   {
     framesImportBam(new FileResourceEntry(file));
   }
 
-  // Specific: Loads the whole frames/cycles structure from the specified BAM ResourceEntry object
+  /** Specific: Loads the whole frames/cycles structure from the specified BAM ResourceEntry object. */
   public void framesImportBam(ResourceEntry entry)
   {
     if (entry != null) {
@@ -2625,6 +2706,7 @@ public class ConvertToBam extends ChildFrame
       if (!cancelled) {
         if (replace) {
           clear();
+          setBamOutput(FileManager.query(Profile.getGameRoot(), entry.getResourceName()));
         }
         int frameBase = modelFrames.getSize();
         BamDecoder decoder = framesAddBam(frameBase, entry);
@@ -2656,7 +2738,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Action for "Add..."->"Add folder...": adds all supported files from the specified folder
+  /** Action for "Add..."->"Add folder...": adds all supported files from the specified folder. */
   public void framesAddFolder()
   {
     framesAddFolder(getOpenPathName(this, "Select folder", null));
@@ -2689,7 +2771,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Action for "Remove": removes the selected frame entry/entries from the frames list, updates cycle structures
+  /** Action for "Remove": removes the selected frame entry/entries from the frames list, updates cycle structures. */
   public void framesRemove()
   {
     try {
@@ -2705,7 +2787,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Specific: Removes the selected frames from the frames list
+  /** Specific: Removes the selected frames from the frames list. */
   public void framesRemove(int[] indices)
   {
     if (indices != null && indices.length > 0) {
@@ -2726,7 +2808,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Action for "Remove all": removes all frame entries from frames list, updatees cycle structures
+  /** Action for "Remove all": removes all frame entries from frames list, updatees cycle structures. */
   public void framesRemoveAll()
   {
     outputSetModified(true);
@@ -2735,7 +2817,7 @@ public class ConvertToBam extends ChildFrame
     listFrames.requestFocusInWindow();
   }
 
-  // Action for "Up" button next to frames list
+  /** Action for "Up" button next to frames list. */
   private void framesMoveUp()
   {
     outputSetModified(true);
@@ -2752,7 +2834,7 @@ public class ConvertToBam extends ChildFrame
     listFrames.requestFocusInWindow();
   }
 
-  // Action for "Down" button next to frames list
+  /** Action for "Down" button next to frames list. */
   private void framesMoveDown()
   {
     outputSetModified(true);
@@ -2769,13 +2851,13 @@ public class ConvertToBam extends ChildFrame
     listFrames.requestFocusInWindow();
   }
 
-  // Action for "Drop unused frames": return number of unused frames
+  /** Action for "Drop unused frames": return number of unused frames. */
   private int framesGetUnusedFramesCount()
   {
     return framesGetUnusedFramesCount(framesGetUnusedFrames());
   }
 
-  // Action for "Drop unused frames": return number of unused frames
+  /** Action for "Drop unused frames": return number of unused frames. */
   private int framesGetUnusedFramesCount(BitSet framesUsed)
   {
     int retVal = 0;
@@ -2789,7 +2871,7 @@ public class ConvertToBam extends ChildFrame
     return retVal;
   }
 
-  // Action  for "Drop unused frames": returns a bitset that maps the used state of all frames
+  /** Action  for "Drop unused frames": returns a bitset that maps the used state of all frames. */
   private BitSet framesGetUnusedFrames()
   {
     BitSet framesUsed = new BitSet(modelFrames.getSize());
@@ -2805,7 +2887,7 @@ public class ConvertToBam extends ChildFrame
     return framesUsed;
   }
 
-  // Action for "Drop unused frames": removes unused frames and adjusts cycle indices respectively
+  /** Action for "Drop unused frames": removes unused frames and adjusts cycle indices respectively. */
   private void framesDropUnusedFrames()
   {
     BitSet framesUsed = framesGetUnusedFrames();
@@ -2823,7 +2905,7 @@ public class ConvertToBam extends ChildFrame
   }
 
 
-  // Action for "Add cycle": adds a new empty cycle at the current cycle index to the cycles list
+  /** Action for "Add cycle": adds a new empty cycle at the current cycle index to the cycles list. */
   private void cyclesAdd()
   {
     int idx = listCycles.getSelectedIndex() + 1;
@@ -2831,7 +2913,7 @@ public class ConvertToBam extends ChildFrame
     cyclesAdd(idx, new int[0]);
   }
 
-  // Specific: adds a new cycle with the specified frame indices at the specified position
+  /** Specific: adds a new cycle with the specified frame indices at the specified position. */
   private void cyclesAdd(int index, int[] indices)
   {
     if (index < 0) index = 0; else if (index > modelCycles.getSize()) index = modelCycles.getSize();
@@ -2842,7 +2924,7 @@ public class ConvertToBam extends ChildFrame
     updateCyclesList();
   }
 
-  // Action for "Remove cycle": removes the selected cycles from the cycles list
+  /** Action for "Remove cycle": removes the selected cycles from the cycles list. */
   private void cyclesRemove()
   {
     int[] indices = listCycles.getSelectedIndices();
@@ -2855,7 +2937,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Specific: removes the specified cycle from the cycles list
+  /** Specific: removes the specified cycle from the cycles list. */
   private void cyclesRemove(int index)
   {
     if (index >= 0 && index < modelCycles.getSize()) {
@@ -2870,14 +2952,14 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Action for "Remove all": removes all cycles from the cycles list
+  /** Action for "Remove all": removes all cycles from the cycles list. */
   private void cyclesRemoveAll()
   {
     modelCycles.clear();
     updateCyclesList();
   }
 
-  // Action for "Up" button next to cycles list
+  /** Action for "Up" button next to cycles list. */
   private void cyclesMoveUp()
   {
     int[] indices = listCycles.getSelectedIndices();
@@ -2894,7 +2976,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Action for "Down" button next to cycles list
+  /** Action for "Down" button next to cycles list. */
   private void cyclesMoveDown()
   {
     int[] indices = listCycles.getSelectedIndices();
@@ -2912,7 +2994,7 @@ public class ConvertToBam extends ChildFrame
   }
 
 
-  // Action for macro "Selected cycle"->"Assign all frames": puts all available frames into the selected cycle (sorted)
+  /** Action for macro "Selected cycle"->"Assign all frames": puts all available frames into the selected cycle (sorted). */
   private void macroAssignFrames()
   {
     int[] indices = listCycles.getSelectedIndices();
@@ -2930,7 +3012,7 @@ public class ConvertToBam extends ChildFrame
     updateCyclesList();
   }
 
-  // Action for macro "Selected cycle"->"Remove all frames": Removes all frame indices
+  /** Action for macro "Selected cycle"->"Remove all frames": Removes all frame indices. */
   private void macroRemoveAllFrames()
   {
     int[] indices = listCycles.getSelectedIndices();
@@ -2943,7 +3025,7 @@ public class ConvertToBam extends ChildFrame
     updateCyclesList();
   }
 
-  // Action for macro "Selected cycle"->"Duplicate cycle": Adds a duplicate below the selected cycle
+  /** Action for macro "Selected cycle"->"Duplicate cycle": Adds a duplicate below the selected cycle. */
   private void macroDuplicateCycle()
   {
     int[] indices = listCycles.getSelectedIndices();
@@ -2963,7 +3045,7 @@ public class ConvertToBam extends ChildFrame
     updateCyclesList();
   }
 
-  // Action for macro "Selected cycle"->"Duplicate each frame": Duplicates each frame in the selected cycle
+  /** Action for macro "Selected cycle"->"Duplicate each frame": Duplicates each frame in the selected cycle. */
   private void macroDuplicateFrames()
   {
     int[] indices = listCycles.getSelectedIndices();
@@ -2980,7 +3062,7 @@ public class ConvertToBam extends ChildFrame
     updateCyclesList();
   }
 
-  // Action for macro "Selected cycle"->"Sort frames": Sorts frame indices by value
+  /** Action for macro "Selected cycle"->"Sort frames": Sorts frame indices by value. */
   private void macroSortFrames()
   {
     int[] indices = listCycles.getSelectedIndices();
@@ -2999,7 +3081,7 @@ public class ConvertToBam extends ChildFrame
     updateCyclesList();
   }
 
-  // Action for macro "Selected cycle"->"Reverse frames order": Reverses the current order of the frame indices
+  /** Action for macro "Selected cycle"->"Reverse frames order": Reverses the current order of the frame indices. */
   private void macroReverseFramesOrder()
   {
     int[] indices = listCycles.getSelectedIndices();
@@ -3018,7 +3100,7 @@ public class ConvertToBam extends ChildFrame
     updateCyclesList();
   }
 
-  // Action for macro "All cycles"->"Remove all frames": Removes all frame indices
+  /** Action for macro "All cycles"->"Remove all frames": Removes all frame indices. */
   private void macroRemoveAllFramesGlobal()
   {
     if (!modelCycles.isEmpty()) {
@@ -3034,7 +3116,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Action for macro "All cycles"->"Reverse cycles order": Reverses the order of all cycle entries
+  /** Action for macro "All cycles"->"Reverse cycles order": Reverses the order of all cycle entries. */
   private void macroReverseCyclesOrder()
   {
     if (!modelCycles.isEmpty()) {
@@ -3059,7 +3141,7 @@ public class ConvertToBam extends ChildFrame
   }
 
 
-  // Action for "Right" button between available frames/current cycle: adds selected frames to the current cycle list
+  /** Action for "Right" button between available frames/current cycle: adds selected frames to the current cycle list. */
   private void currentCycleAdd()
   {
     int[] indices = listFramesAvail.getSelectedIndices();
@@ -3074,7 +3156,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Action for "Left" button between available frames/current cycle: removes selected frames from the current cycle list
+  /** Action for "Left" button between available frames/current cycle: removes selected frames from the current cycle list. */
   private void currentCycleRemove()
   {
     int[] indices = listCurCycle.getSelectedIndices();
@@ -3088,7 +3170,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Action for "Up" button of current cycle list
+  /** Action for "Up" button of current cycle list. */
   private void currentCycleMoveUp()
   {
     int[] indices = listCurCycle.getSelectedIndices();
@@ -3104,7 +3186,7 @@ public class ConvertToBam extends ChildFrame
     updateCurrentCycle();
   }
 
-  // Action for "Down" button of current cycle list
+  /** Action for "Down" button of current cycle list. */
   private void currentCycleMoveDown()
   {
     int[] indices = listCurCycle.getSelectedIndices();
@@ -3121,7 +3203,7 @@ public class ConvertToBam extends ChildFrame
   }
 
 
-  // Action for "Play/Pause": start/pause playback without resetting current frame
+  /** Action for "Play/Pause": start/pause playback without resetting current frame. */
   private void previewPlay()
   {
     if (previewIsPlaying()) {
@@ -3140,7 +3222,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Action for "Stop": stops playback and resets current frame to 1
+  /** Action for "Stop": stops playback and resets current frame to 1. */
   private void previewStop()
   {
     timer.stop();
@@ -3154,13 +3236,13 @@ public class ConvertToBam extends ChildFrame
     updatePreview();
   }
 
-  // Returns whether playback is active
+  /** Returns whether playback is active. */
   private boolean previewIsPlaying()
   {
     return isPreviewPlaying;
   }
 
-  // Action for "Next cycle" button: selects next cycle index if available
+  /** Action for "Next cycle" button: selects next cycle index if available. */
   private void previewCycleUp()
   {
     if (bamControlPreview.cycleGet() < bamControlPreview.cycleCount() - 1) {
@@ -3170,7 +3252,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Action for "Previous cycle" button: selects previous cycle index if available
+  /** Action for "Previous cycle" button: selects previous cycle index if available. */
   private void previewCycleDown()
   {
     if (bamControlPreview.cycleGet() > 0) {
@@ -3180,7 +3262,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Action for "Next frame" button: selects next frame index if available
+  /** Action for "Next frame" button: selects next frame index if available. */
   private void previewFrameUp()
   {
     if (bamControlPreview.cycleGetFrameIndex() < bamControlPreview.cycleFrameCount() - 1) {
@@ -3189,7 +3271,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Action for "Previous frame" button: selects previous frame index if available
+  /** Action for "Previous frame" button: selects previous frame index if available. */
   private void previewFrameDown()
   {
     if (bamControlPreview.cycleGetFrameIndex() > 0) {
@@ -3198,13 +3280,13 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Returns the current playback mode
+  /** Returns the current playback mode. */
   private int previewGetMode()
   {
     return cbPreviewMode.getSelectedIndex();
   }
 
-  // Sets the current playback mode
+  /** Sets the current playback mode. */
   private void previewSetMode(int mode)
   {
     if (mode >= 0 && mode < cbPreviewMode.getItemCount()) {
@@ -3212,7 +3294,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Sets a new frame rate
+  /** Sets a new frame rate. */
   private void previewSetFrameRate(double fps)
   {
     try {
@@ -3223,34 +3305,37 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Returns whether the preview is in zoom mode
+  /** Returns whether the preview is in zoom mode. */
   private boolean previewIsZoomed()
   {
     return cbPreviewZoom.isSelected();
   }
 
-  // Sets the zoom mode of the preview
+  /** Sets the zoom mode of the preview. */
   private void previewSetZoom(boolean set)
   {
     cbPreviewZoom.setSelected(set);
     previewPrepare(false);
   }
 
-  // Returns whether markers are visible
+  /** Returns whether markers are visible. */
   private boolean previewIsMarkerVisible()
   {
     return cbPreviewShowMarker.isSelected();
   }
 
-  // Sets the visibility state of markers
+  /** Sets the visibility state of markers. */
   private void previewSetMarkerVisible(boolean set)
   {
     cbPreviewShowMarker.setSelected(set);
     previewPrepare(false);
   }
 
-  // Advances the animation by one step, depending on the current playback mode. Returns false
-  // Returns false if no more advancements can be done.
+  /**
+   * Advances the animation by one step, depending on the current playback mode.
+   *
+   * @return {@code false} if no more advancements can be done.
+   */
   private boolean previewAdvanceAnimation()
   {
     boolean retVal = true;
@@ -3295,14 +3380,14 @@ public class ConvertToBam extends ChildFrame
     return retVal;
   }
 
-  // Resets the current animation (can used as a reaction to the IsModified flag)
+  /** Resets the current animation (can used as a reaction to the IsModified flag). */
   private void previewValidate()
   {
     previewPrepare(true);
     updatePreview();
   }
 
-  // Updates the BAM control instance for previews
+  /** Updates the BAM control instance for previews. */
   private void previewInitControl()
   {
     if (bamControlPreview == null) {
@@ -3321,7 +3406,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Initializes the preview
+  /** Initializes the preview. */
   private void previewPrepare(boolean update)
   {
     if (update) {
@@ -3366,7 +3451,7 @@ public class ConvertToBam extends ChildFrame
     previewDisplay();
   }
 
-  // Displays the current frame on screen
+  /** Displays the current frame on screen. */
   private synchronized void previewDisplay()
   {
     if (bamControlPreview != null && previewCanvas != null && rcPreview.getImage() != null) {
@@ -3436,7 +3521,7 @@ public class ConvertToBam extends ChildFrame
   }
 
 
-  // Inserts a new filter into the filters list
+  /** Inserts a new filter into the filters list. */
   private BamFilterBase filterAdd()
   {
     BamFilterFactory.FilterInfo fi = (BamFilterFactory.FilterInfo)cbFiltersAdd.getSelectedItem();
@@ -3446,7 +3531,7 @@ public class ConvertToBam extends ChildFrame
     return null;
   }
 
-  // Inserts the specified filter into the filters list
+  /** Inserts the specified filter into the filters list. */
   private BamFilterBase filterAdd(BamFilterFactory.FilterInfo info)
   {
     if (info != null) {
@@ -3479,13 +3564,13 @@ public class ConvertToBam extends ChildFrame
     return null;
   }
 
-  // Removes the currently selected filter
+  /** Removes the currently selected filter. */
   private void filterRemove()
   {
     filterRemove(listFilters.getSelectedIndex());
   }
 
-  // Removes the specified filter from the filters list
+  /** Removes the specified filter from the filters list. */
   private void filterRemove(int index)
   {
     if (index >= 0 && index < modelFilters.size()) {
@@ -3502,7 +3587,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Removes all filters from the filters list
+  /** Removes all filters from the filters list. */
   private void filterRemoveAll()
   {
     listFilters.setSelectedIndex(-1);
@@ -3515,7 +3600,7 @@ public class ConvertToBam extends ChildFrame
     outputSetModified(true);
   }
 
-  // Moves the currently selected filter up
+  /** Moves the currently selected filter up. */
   private void filterMoveUp()
   {
     int index = listFilters.getSelectedIndex();
@@ -3530,7 +3615,7 @@ public class ConvertToBam extends ChildFrame
     outputSetModified(true);
   }
 
-  // Moves the currently selected filter down
+  /** Moves the currently selected filter down. */
   private void filterMoveDown()
   {
     int index = listFilters.getSelectedIndex();
@@ -3545,13 +3630,13 @@ public class ConvertToBam extends ChildFrame
     outputSetModified(true);
   }
 
-  // Returns whether preview markers have been enabled
+  /** Returns whether preview markers have been enabled. */
   private boolean filterIsMarkerVisible()
   {
     return cbFiltersShowMarker.isSelected();
   }
 
-  // Returns the currently selected frame index
+  /** Returns the currently selected frame index. */
   private int filterGetPreviewFrameIndex()
   {
     return ((Integer)sFiltersPreviewFrame.getValue()).intValue();
@@ -3572,7 +3657,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Prepares the specified frame for quick preview
+  /** Prepares the specified frame for quick preview. */
   private void filterSetPreviewFrame(int frameIdx, boolean complete)
   {
     PseudoBamFrameEntry entry = getFilteredBamFrame(getBamVersion(), filterGetPreviewFrameIndex(), complete);
@@ -3585,7 +3670,7 @@ public class ConvertToBam extends ChildFrame
     filterDisplay(entry);
   }
 
-  // Displays the specified entry in the filters quick preview
+  /** Displays the specified entry in the filters quick preview. */
   private void filterDisplay(PseudoBamFrameEntry entry)
   {
     if (rcFiltersPreview.getImage() != null && entry != null && entry.getFrame() != null) {
@@ -3632,8 +3717,10 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Triggers the update function for each filter in the list, enabling them to react to the
-  // current state of the converter
+  /**
+   * Triggers the update function for each filter in the list, enabling them to react to the
+   * current state of the converter.
+   */
   private void filterUpdateControls()
   {
     for (int i = 0; i < modelFilters.size(); i++) {
@@ -3642,7 +3729,7 @@ public class ConvertToBam extends ChildFrame
   }
 
 
-  // Action for selecting BAM version in export section: 0=BAM v1, 1=BAM v2
+  /** Action for selecting BAM version in export section: 0=BAM v1, 1=BAM v2. */
   private void setBamVersion(int index)
   {
     String s;
@@ -3667,7 +3754,7 @@ public class ConvertToBam extends ChildFrame
     outputSetModified(true);
   }
 
-  // Action for BAM version help: Displays a message dialog with information
+  /** Action for BAM version help: Displays a message dialog with information. */
   private void showVersionHelp()
   {
     final String helpMsg =
@@ -3681,7 +3768,7 @@ public class ConvertToBam extends ChildFrame
     JOptionPane.showMessageDialog(this, helpMsg, "About BAM versions", JOptionPane.INFORMATION_MESSAGE);
   }
 
-  // Action for BAM v2 compression help: Displays a message dialog with information
+  /** Action for BAM v2 compression help: Displays a message dialog with information. */
   private void showCompressionHelp()
   {
     final String helpMsg =
@@ -3693,14 +3780,14 @@ public class ConvertToBam extends ChildFrame
     JOptionPane.showMessageDialog(this, helpMsg, "About compression types", JOptionPane.INFORMATION_MESSAGE);
   }
 
-  // Action for "Compress BAM" in BAM v1 export
+  /** Action for "Compress BAM" in BAM v1 export. */
   private void updateCompressBam()
   {
     Boolean b = Boolean.valueOf(cbCompressBam.isSelected());
     getBamDecoder(BAM_ORIGINAL).setOption(PseudoBamDecoder.OPTION_BOOL_COMPRESSED, b);
   }
 
-  // Specify a BAM output file
+  /** Specify a BAM output file. */
   private Path setBamOutput()
   {
     Path rootPath = null;
@@ -3718,7 +3805,7 @@ public class ConvertToBam extends ChildFrame
   }
 
 
-  // Returns the min/max values from the specified array of indices in a Pair object.
+  /** Returns the min/max values from the specified array of indices in a Pair object. */
   private Pair<Integer> getIndexBounds(int[] indices)
   {
     Pair<Integer> retVal = new Pair<Integer>(Integer.valueOf(-1), Integer.valueOf(-1));
@@ -3737,7 +3824,7 @@ public class ConvertToBam extends ChildFrame
     return retVal;
   }
 
-  // Attempts to find the most appropriate DXT compression type based on the source frames
+  /** Attempts to find the most appropriate DXT compression type based on the source frames. */
   private DxtEncoder.DxtType getAutoDxtType()
   {
     DxtEncoder.DxtType dxtType = DxtEncoder.DxtType.DXT1;
@@ -3796,7 +3883,9 @@ public class ConvertToBam extends ChildFrame
       if (outList != null && !outList.isEmpty()) {
         for (int idx = 0; idx < outList.size(); idx++) {
           // processing output filter
-          outList.get(idx).process(bamDecoderFinal);
+          if (!outList.get(idx).process(bamDecoderFinal)) {
+            throw new Exception("Conversion failed.");
+          }
         }
       } else {
         throw new Exception("No output filter specified.");
@@ -3805,26 +3894,26 @@ public class ConvertToBam extends ChildFrame
     } catch (Exception e) {
       e.printStackTrace();
       result.add(null);
-      result.add(String.format("Error while exporting BAM files.\n(%1$s)", e.getMessage()));
+      result.add(String.format("Error while exporting BAM files.\n(%s)", e.getMessage()));
     }
     return result;
   }
 
 
-  // Returns whether the output/preview BAM has been modified
+  /** Returns whether the output/preview BAM has been modified. */
   private boolean outputIsModified()
   {
     return isPreviewModified;
   }
 
-  // Defines whether the internal BAM structure has changed in any way
+  /** Defines whether the internal BAM structure has changed in any way. */
   private void outputSetModified(boolean isModified)
   {
     isPreviewModified = isModified;
   }
 
 
-  // Returns a single filtered BAM frame. Set "complete" to recreate the whole filter chain.
+  /** Returns a single filtered BAM frame. Set "complete" to recreate the whole filter chain. */
   private PseudoBamFrameEntry getFilteredBamFrame(int bamVersion, int frameIdx, boolean complete)
   {
     int curFilterIdx = listFilters.getSelectedIndex();
@@ -3862,7 +3951,7 @@ public class ConvertToBam extends ChildFrame
   }
 
 
-  // Updates the final BAM structure in bamDecoderFinal
+  /** Updates the final BAM structure in bamDecoderFinal. */
   private void updateFilteredBamDecoder(int bamVersion, boolean force) throws Exception
   {
     if (outputIsModified() || force) {
@@ -3913,9 +4002,9 @@ public class ConvertToBam extends ChildFrame
             // skipping output filter
           } else {
             if (filters.get(idx) != null) {
-              System.err.println(String.format("Unrecognized filter at index %1$d: %2$s", idx, filters.get(idx)));
+              System.err.println(String.format("Unrecognized filter at index %d: %s", idx, filters.get(idx)));
             } else {
-              System.err.println(String.format("null filter at index %1$d", idx));
+              System.err.println(String.format("null filter at index %d", idx));
             }
           }
         }
@@ -3924,7 +4013,7 @@ public class ConvertToBam extends ChildFrame
   }
 
 
-  // Creates a sorted list including all selected filters in the post-processing tab
+  /** Creates a sorted list including all selected filters in the post-processing tab. */
   private List<BamFilterBase> createFilterList(boolean includeOutputFilters)
   {
     List<BamFilterBase> retVal = new ArrayList<BamFilterBase>();
@@ -3950,7 +4039,7 @@ public class ConvertToBam extends ChildFrame
     return retVal;
   }
 
-  // Creates a list of selected output filters only
+  /** Creates a list of selected output filters only. */
   private List<BamFilterBaseOutput> createOutputFilterList()
   {
     List<BamFilterBaseOutput> retVal = new ArrayList<BamFilterBaseOutput>();
@@ -3966,8 +4055,10 @@ public class ConvertToBam extends ChildFrame
     return retVal;
   }
 
-  // Creates a new BAM structure from the existing structure that is compatible with the
-  // specified target BAM version.
+  /**
+   * Creates a new BAM structure from the existing structure that is compatible with the
+   * specified target BAM version.
+   */
   private void updateFinalBamDecoder(int bamVersion) throws Exception
   {
     listFrameEntries.get(BAM_FINAL).clear();
@@ -3993,7 +4084,7 @@ public class ConvertToBam extends ChildFrame
                                   Boolean.valueOf(isBamV1Compressed()));
         // preparing palette
         int[] palette = paletteDialog.getPalette(paletteDialog.getPaletteType());
-        int threshold = getTransparencyThreshold();
+        int threshold = getUseAlpha() ? -1 : getTransparencyThreshold();
         int transIndex = -1;
         for (int i = 0; i < palette.length; i++) {
           int c = palette[i] & 0x00ffffff;
@@ -4005,8 +4096,6 @@ public class ConvertToBam extends ChildFrame
         if (transIndex < 0) {
           transIndex = 0;
         }
-        int[] hclPalette = new int[palette.length];
-        ColorConvert.toHclPalette(palette, hclPalette);
         HashMap<Integer, Byte> colorCache = new HashMap<Integer, Byte>(4096);
         for (int i = 0; i < palette.length; i++) {
           if (i != transIndex) {
@@ -4015,14 +4104,13 @@ public class ConvertToBam extends ChildFrame
         }
 
         // processing frames
-        IndexColorModel cm = new IndexColorModel(8, 256, palette, 0, false, transIndex, DataBuffer.TYPE_BYTE);
+        IndexColorModel cm = new IndexColorModel(8, 256, palette, 0, getUseAlpha(), transIndex, DataBuffer.TYPE_BYTE);
         for (int i = 0; i < srcListFrames.size(); i++) {
           PseudoBamFrameEntry srcEntry = srcListFrames.get(i);
           BufferedImage srcImage = ColorConvert.toBufferedImage(srcEntry.getFrame(), true, true);
           int[] srcBuf = ((DataBufferInt)srcImage.getRaster().getDataBuffer()).getData();
-          BufferedImage dstImage = new BufferedImage(srcEntry.getWidth(),
-              srcEntry.getHeight(),
-                                                  BufferedImage.TYPE_BYTE_INDEXED, cm);
+          BufferedImage dstImage = new BufferedImage(srcEntry.getWidth(), srcEntry.getHeight(),
+                                                     BufferedImage.TYPE_BYTE_INDEXED, cm);
           byte[] dstBuf = ((DataBufferByte)dstImage.getRaster().getDataBuffer()).getData();
 
           for (int ofs = 0; ofs < srcBuf.length; ofs++) {
@@ -4030,15 +4118,13 @@ public class ConvertToBam extends ChildFrame
             if (PseudoBamDecoder.isTransparentColor(c, threshold)) {
               dstBuf[ofs] = (byte)transIndex;
             } else {
-              c &= 0x00ffffff;
               Byte colIdx = colorCache.get(Integer.valueOf(c));
               if (colIdx != null) {
                 int ci = colIdx.intValue() & 0xff;
                 if (ci >= transIndex) ci++;
                 dstBuf[ofs] = colIdx.byteValue();//(byte)ci;
               } else {
-                byte color = (byte)ColorConvert.nearestColor(srcBuf[ofs], hclPalette);
-                //int ci = (color < transIndex) ? color : (color + 1);
+                byte color = (byte)ColorConvert.nearestColorRGB(srcBuf[ofs], palette, !getUseAlpha());
                 dstBuf[ofs] = color;//(byte)ci;
                 colorCache.put(Integer.valueOf(c), Byte.valueOf(color));
               }
@@ -4078,7 +4164,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Creates a new single frame that is compatible with the specified BAM version.
+  /** Creates a new single frame that is compatible with the specified BAM version. */
   private void updateFinalBamFrame(int bamVersion, int frameIdx)
   {
     if (frameIdx >= 0 && frameIdx < listFrameEntries.get(BAM_ORIGINAL).size()) {
@@ -4092,7 +4178,7 @@ public class ConvertToBam extends ChildFrame
         // preparing palette
         final int Green = 0x0000ff00;
         int[] palette = paletteDialog.getPalette(paletteDialog.getPaletteType());
-        int threshold = getTransparencyThreshold();
+        int threshold = getUseAlpha() ? -1 : getTransparencyThreshold();
         int transIndex = -1;
         for (int i = 0; i < palette.length; i++) {
           int c = palette[i] & 0x00ffffff;
@@ -4104,15 +4190,13 @@ public class ConvertToBam extends ChildFrame
         if (transIndex < 0) {
           transIndex = 0;
         }
-        int[] hclPalette = new int[palette.length];
-        ColorConvert.toHclPalette(palette, hclPalette);
         HashMap<Integer, Byte> colorCache = new HashMap<Integer, Byte>(4096);
         for (int i = 0; i < palette.length; i++) {
           if (i != transIndex) {
             colorCache.put(Integer.valueOf(palette[i]), Byte.valueOf((byte)i));
           }
         }
-        IndexColorModel cm = new IndexColorModel(8, 256, palette, 0, false, transIndex, DataBuffer.TYPE_BYTE);
+        IndexColorModel cm = new IndexColorModel(8, 256, palette, 0, getUseAlpha(), transIndex, DataBuffer.TYPE_BYTE);
 
         // converting frame
         srcImage = ColorConvert.toBufferedImage(srcImage, true, true);
@@ -4126,15 +4210,13 @@ public class ConvertToBam extends ChildFrame
           if (PseudoBamDecoder.isTransparentColor(c, threshold)) {
             dstBuf[ofs] = (byte)transIndex;
           } else {
-            c &= 0x00ffffff;
             Byte colIdx = colorCache.get(Integer.valueOf(c));
             if (colIdx != null) {
               int ci = colIdx.intValue() & 0xff;
               if (ci >= transIndex) ci++;
-              dstBuf[ofs] = colIdx.byteValue();//(byte)ci;
+              dstBuf[ofs] = colIdx.byteValue();
             } else {
-              byte color = (byte)ColorConvert.nearestColor(srcBuf[ofs], hclPalette);
-              //int ci = (color < transIndex) ? color : (color + 1);
+              byte color = (byte)ColorConvert.nearestColorRGB(srcBuf[ofs], palette, !getUseAlpha());
               dstBuf[ofs] = color;//(byte)ci;
               colorCache.put(Integer.valueOf(c), Byte.valueOf(color));
             }
@@ -4157,8 +4239,41 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
+  /** Updates current BAM session path list. */
+  private void updateRecentSession(Path session)
+  {
+    if (session != null) {
+      BamOptionsDialog.updateRecentSession(session);
+      initSessionEntries();
+    }
+  }
 
-  // Initializes a new ProgressMonitor instance
+  /** (Re-)creates a list of recently accessed BAM session paths. */
+  private void initSessionEntries()
+  {
+    if (miSessionHistory == null) {
+      miSessionHistory = new JMenu("Load recent sessions");
+    } else {
+      Component[] comp = miSessionHistory.getComponents();
+      for (final Component c: comp) {
+        if (c instanceof DataMenuItem) {
+          ((DataMenuItem)c).removeActionListener(this);
+        }
+      }
+      miSessionHistory.removeAll();
+    }
+
+    List<Path> recentSessions = BamOptionsDialog.getRecentSessions();
+    for (final Path item: recentSessions) {
+      DataMenuItem dmi = new DataMenuItem(item.getFileName().toString(), -1, item);
+      dmi.setToolTipText(item.toString());
+      dmi.addActionListener(this);
+      miSessionHistory.add(dmi);
+    }
+    miSessionHistory.setEnabled(!recentSessions.isEmpty());
+  }
+
+  /** Initializes a new ProgressMonitor instance. */
   void initProgressMonitor(Component parent, String msg, String note, int maxProgress,
                                    int msDecide, int msWait)
   {
@@ -4174,7 +4289,7 @@ public class ConvertToBam extends ChildFrame
     progress.setProgress(pmCur);
   }
 
-  // Closes an active instance of the ProgressMonitor
+  /** Closes an active instance of the ProgressMonitor. */
   void releaseProgressMonitor()
   {
     if (progress != null) {
@@ -4183,7 +4298,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Advances the active ProgressMonitor instance by one step
+  /** Advances the active ProgressMonitor instance by one step. */
   void advanceProgressMonitor(String note)
   {
     if (progress != null) {
@@ -4197,7 +4312,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Returns the current progress of the active ProgressMonitor instance
+  /** Returns the current progress of the active ProgressMonitor instance. */
   int getProgressMonitorStage()
   {
     if (progress != null) {
@@ -4207,7 +4322,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Sets the current stage of the active ProgressMonitor instance
+  /** Sets the current stage of the active ProgressMonitor instance. */
   void setProgressMonitorState(int stage)
   {
     if (progress != null) {
@@ -4217,7 +4332,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Returns the max. stage of the active ProgressMonitor instance
+  /** Returns the max. stage of the active ProgressMonitor instance. */
   int getProgressMonitorMax()
   {
     if (progress != null) {
@@ -4227,7 +4342,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Sets a new max. stage to the active ProgressMonitor instance
+  /** Sets a new max. stage to the active ProgressMonitor instance. */
   void setProgressMonitorMax(int max)
   {
     if (progress != null) {
@@ -4237,7 +4352,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Sets a new note to the active ProgressMonitor instance
+  /** Sets a new note to the active ProgressMonitor instance. */
   void setProgressMonitorNote(String note)
   {
     if (progress != null) {
@@ -4245,7 +4360,7 @@ public class ConvertToBam extends ChildFrame
     }
   }
 
-  // Returns whether the active ProgressMonitor instance has been cancelled by the user
+  /** Returns whether the active ProgressMonitor instance has been cancelled by the user. */
   boolean isProgressMonitorCancelled()
   {
     if (isProgressMonitorActive()) {
@@ -4254,13 +4369,13 @@ public class ConvertToBam extends ChildFrame
     return false;
   }
 
-  // Returns whether a ProgressMonitor instance is active
+  /** Returns whether a ProgressMonitor instance is active. */
   boolean isProgressMonitorActive()
   {
     return (progress != null);
   }
 
-  // Returns the ProgressMonitor instance, or null if not active
+  /** Returns the ProgressMonitor instance, or null if not active. */
   ProgressMonitor getProgressMonitor()
   {
     return progress;
@@ -4269,7 +4384,7 @@ public class ConvertToBam extends ChildFrame
 
 //-------------------------- INNER CLASSES --------------------------
 
-  // Manages the frames aspect of BAM resources
+  /** Manages the frames aspect of BAM resources. */
   private static class BamFramesListModel extends AbstractListModel<PseudoBamFrameEntry>
   {
     private final ConvertToBam converter;
@@ -4440,7 +4555,7 @@ public class ConvertToBam extends ChildFrame
   }
 
 
-  // Manages frames within a cycle
+  /** Manages frames within a cycle. */
   private static class BamCycleFramesListModel extends AbstractListModel<PseudoBamFrameEntry>
   {
     private final ConvertToBam converter;
@@ -4619,7 +4734,7 @@ public class ConvertToBam extends ChildFrame
 
 
 
-  // Manages the cycles aspect of BAM resources
+  /** Manages the cycles aspect of BAM resources. */
   private static class BamCyclesListModel extends AbstractListModel<PseudoBamCycleEntry>
   {
     private final ConvertToBam converter;
@@ -4791,7 +4906,7 @@ public class ConvertToBam extends ChildFrame
   }
 
 
-  // Adds a prefix to the cell's visual output
+  /** Adds a prefix to the cell's visual output. */
   private static class IndexedCellRenderer extends DefaultListCellRenderer
   {
     public IndexedCellRenderer()
@@ -4803,17 +4918,19 @@ public class ConvertToBam extends ChildFrame
     public Component getListCellRendererComponent(JList<?> list, Object value, int index,
         boolean isSelected, boolean cellHasFocus)
     {
-      String template = "%1$0" +
-                        String.format("%1$d", Integer.toString(list.getModel().getSize()).length()) +
-                        "d - %2$s";
+      String template = "%0" +
+                        String.format("%d", Integer.toString(list.getModel().getSize()).length()) +
+                        "d - %s";
       return super.getListCellRendererComponent(list, String.format(template, index, value),
                                                 index, isSelected, cellHasFocus);
     }
   }
 
 
-  // Provides methods for importing or exporting BAM configuration data via INI file, such as
-  // frame sources, center position data or cycle definitions
+  /**
+   * Provides methods for importing or exporting BAM configuration data via INI file, such as
+   * frame sources, center position data or cycle definitions.
+   */
   private static class Exporter extends JDialog implements ActionListener
   {
     /*
@@ -4893,7 +5010,7 @@ public class ConvertToBam extends ChildFrame
     public void actionPerformed(ActionEvent event)
     {
       if (event.getSource() == bAccept) {
-        accept();
+        acceptDialog();
       } else if (event.getSource() == bCancel) {
         cancel();
       } else if (event.getSource() instanceof JCheckBox) {
@@ -4924,6 +5041,7 @@ public class ConvertToBam extends ChildFrame
                                      new FileNameExtensionFilter[]{getIniFilter()}, 0);
       if (outFile != null) {
         outFile = StreamUtils.replaceFileExtension(outFile, "ini");
+        bam.updateRecentSession(outFile);
         if (getSelection(true)) {
           try {
             WindowBlocker.blockWindow(bam, true);
@@ -4951,6 +5069,7 @@ public class ConvertToBam extends ChildFrame
           files[0] = StreamUtils.replaceFileExtension(files[0], "ini");
         }
         if (loadData(files[0], silent)) {
+          bam.updateRecentSession(files[0]);
           if (getSelection(false)) {
             try {
               WindowBlocker.blockWindow(bam, true);
@@ -4964,7 +5083,30 @@ public class ConvertToBam extends ChildFrame
       return false;
     }
 
-    // Loads data from the specified file without user-interaction and optionally without feedback.
+    /**
+     * Imports selected data from the specified session file.
+     * Returns whether import was successful.
+     */
+    public boolean importData(Path session, boolean silent)
+    {
+      if (session != null) {
+        resetData();
+        if (loadData(session, silent)) {
+          bam.updateRecentSession(session);
+          if (getSelection(false)) {
+            try {
+              WindowBlocker.blockWindow(bam, true);
+              return applyData(silent);
+            } finally {
+              WindowBlocker.blockWindow(bam, false);
+            }
+          }
+        }
+      }
+      return false;
+    }
+
+    /** Loads data from the specified file without user-interaction and optionally without feedback. */
     private boolean loadData(Path inFile, boolean silent)
     {
       if (inFile != null) {
@@ -5019,8 +5161,7 @@ public class ConvertToBam extends ChildFrame
     private boolean loadFrameData(IniMapSection frames) throws Exception
     {
       if (frames != null && frames.getName().equalsIgnoreCase(SECTION_FRAMES)) {
-        for (int i = 0; i < frames.getEntryCount(); i++) {
-          IniMapEntry entry = frames.getEntry(i);
+        for (final IniMapEntry entry : frames) {
           if (Misc.toNumber(entry.getKey(), -1) < 0) {
             throw new Exception("Invalid key value found at line " + (entry.getLine() + 1));
           }
@@ -5059,8 +5200,7 @@ public class ConvertToBam extends ChildFrame
     private boolean loadCenterData(IniMapSection centers) throws Exception
     {
       if (centers != null && centers.getName().equalsIgnoreCase(SECTION_CENTER)) {
-        for (int i = 0; i < centers.getEntryCount(); i++) {
-          IniMapEntry entry = centers.getEntry(i);
+        for (final IniMapEntry entry : centers) {
           if (Misc.toNumber(entry.getKey(), -1) < 0) {
             throw new Exception("Invalid key value found at line " + (entry.getLine() + 1));
           }
@@ -5077,8 +5217,7 @@ public class ConvertToBam extends ChildFrame
     private boolean loadCycleData(IniMapSection cycles) throws Exception
     {
       if (cycles != null && cycles.getName().equalsIgnoreCase(SECTION_CYCLES)) {
-        for (int i = 0; i < cycles.getEntryCount(); i++) {
-          IniMapEntry entry = cycles.getEntry(i);
+        for (final IniMapEntry entry : cycles) {
           if (Misc.toNumber(entry.getKey(), -1) < 0) {
             throw new Exception("Invalid key value found at line " + (entry.getLine() + 1));
           }
@@ -5095,8 +5234,7 @@ public class ConvertToBam extends ChildFrame
     private boolean loadFilterData(IniMapSection filters) throws Exception
     {
       if (filters != null && filters.getName().equalsIgnoreCase(SECTION_FILTERS)) {
-        for (int i = 0; i < filters.getEntryCount(); i++) {
-          IniMapEntry entry = filters.getEntry(i);
+        for (final IniMapEntry entry : filters) {
           String key = entry.getKey().trim();
           String value = entry.getValue().trim();
           if (key.matches(KEY_FILTER_NAME + "\\d+")) {
@@ -5116,7 +5254,7 @@ public class ConvertToBam extends ChildFrame
     }
 
 
-    // Applies available data to the converter without user-interaction and optionally without feedback.
+    /** Applies available data to the converter without user-interaction and optionally without feedback. */
     private boolean applyData(boolean silent)
     {
       bam.previewStop();
@@ -5156,7 +5294,7 @@ public class ConvertToBam extends ChildFrame
 
     private boolean applyFramesData(boolean silent) throws Exception
     {
-      // Storage for ResourceEntry and frame index for convenience
+      /** Storage for ResourceEntry and frame index for convenience. */
       class SourceFrame {
         public final ResourceEntry entry;
         public final int index;
@@ -5168,7 +5306,7 @@ public class ConvertToBam extends ChildFrame
         }
       }
 
-      // Primarily used for caching BAM decoder instances
+      /** Primarily used for caching BAM decoder instances. */
       class SourceData {
         public final boolean isBam;
         // bam-specific
@@ -5186,7 +5324,7 @@ public class ConvertToBam extends ChildFrame
           if (this.decoder instanceof BamV1Decoder) {
             int[] palette = ((BamV1Decoder.BamV1Control)control).getPalette();
             int transColor = ((BamV1Decoder.BamV1Control)control).getTransparencyIndex();
-            this.cm = new IndexColorModel(8, 256, palette, 0, false, transColor, DataBuffer.TYPE_BYTE);
+            this.cm = new IndexColorModel(8, 256, palette, 0, getUseAlpha(), transColor, DataBuffer.TYPE_BYTE);
           } else {
             this.cm = null;
           }
@@ -5207,9 +5345,7 @@ public class ConvertToBam extends ChildFrame
         // preparing frames
         int entryCount = sectionFrames.getEntryCount();
         SourceFrame[] frames = new SourceFrame[entryCount];
-        for (int i = 0; i < entryCount; i++) {
-          IniMapEntry entry = sectionFrames.getEntry(i);
-
+        for (final IniMapEntry entry : sectionFrames) {
           // checking list indices
           int listIndex = Misc.toNumber(entry.getKey(), -1);
           if (listIndex < 0 || listIndex >= entryCount) {
@@ -5285,9 +5421,7 @@ public class ConvertToBam extends ChildFrame
     private boolean applyCenterData(boolean silent) throws Exception
     {
       if (sectionCenter != null) {
-        int entryCount = sectionCenter.getEntryCount();
-        for (int i = 0; i < entryCount; i++) {
-          IniMapEntry entry = sectionCenter.getEntry(i);
+        for (final IniMapEntry entry : sectionCenter) {
           int listIndex = Misc.toNumber(entry.getKey(), -1);
           if (listIndex >= 0 && listIndex < bam.modelFrames.getSize()) {
             String[] numbers = entry.getValue().trim().split(Character.toString(SEPARATOR_NUMBER));
@@ -5316,11 +5450,9 @@ public class ConvertToBam extends ChildFrame
         }
 
         // preparing cycle definitions
-        int entryCount = sectionCycles.getEntryCount();
-        HashMap<Integer, int[]> cycles = new HashMap<Integer, int[]>();
+        final HashMap<Integer, int[]> cycles = new HashMap<>();
         int maxCycle = -1;
-        for (int i = 0; i < entryCount; i++) {
-          IniMapEntry entry = sectionCycles.getEntry(i);
+        for (final IniMapEntry entry : sectionCenter) {
           int cycleIndex = Misc.toNumber(entry.getKey(), -1);
           if (cycleIndex >= 0) {
             String value = entry.getValue().trim();
@@ -5342,8 +5474,7 @@ public class ConvertToBam extends ChildFrame
 
         // post-processing
         int[][] cycleArray = new int[maxCycle + 1][];
-        for (Iterator<Integer> iter = cycles.keySet().iterator(); iter.hasNext();) {
-          Integer idx = iter.next();
+        for (Integer idx : cycles.keySet()) {
           cycleArray[idx] = cycles.get(idx);
         }
 
@@ -5352,8 +5483,8 @@ public class ConvertToBam extends ChildFrame
 
         // applying cycle definitions
         final int[] emptyCycle = new int[0];
-        for (int i = 0; i < cycleArray.length; i++) {
-          int[] curCycle = (cycleArray[i] != null) ? cycleArray[i] : emptyCycle;
+        for (int[] cycle : cycleArray) {
+          int[] curCycle = (cycle != null) ? cycle : emptyCycle;
           bam.modelCycles.add(curCycle);
         }
 
@@ -5378,14 +5509,12 @@ public class ConvertToBam extends ChildFrame
         }
 
         // preparing filter list
-        int entryCount = sectionFilters.getEntryCount();
-        HashMap<Integer, Config> filterMap = new HashMap<Integer, Config>();
+        final HashMap<Integer, Config> filterMap = new HashMap<>();
         int maxIndex = -1;
-        for (int i = 0; i < entryCount; i++) {
-          IniMapEntry entry = sectionFilters.getEntry(i);
+        for (final IniMapEntry entry : sectionFilters) {
           String key = entry.getKey();
           if (key.startsWith(KEY_FILTER_NAME)) {
-            Integer idx = Integer.valueOf(Misc.toNumber(key.substring(KEY_FILTER_NAME.length()), -1));
+            final int idx = Misc.toNumber(key.substring(KEY_FILTER_NAME.length()), -1);
             if (idx >= 0) {
               String name = entry.getValue().trim();
               Config config = filterMap.get(idx);
@@ -5397,7 +5526,7 @@ public class ConvertToBam extends ChildFrame
               maxIndex = Math.max(maxIndex, idx);
             }
           } else if (key.startsWith(KEY_FILTER_CONFIG)) {
-            Integer idx = Integer.valueOf(Misc.toNumber(key.substring(KEY_FILTER_CONFIG.length()), -1));
+            final Integer idx = Misc.toNumber(key.substring(KEY_FILTER_CONFIG.length()), -1);
             if (idx >= 0) {
               String param = entry.getValue().trim();
               Config config = filterMap.get(idx);
@@ -5417,8 +5546,7 @@ public class ConvertToBam extends ChildFrame
 
         // post-processing data
         Config[] configArray = new Config[maxIndex + 1];
-        for (Iterator<Integer> iter = filterMap.keySet().iterator(); iter.hasNext();) {
-          Integer idx = iter.next();
+        for (Integer idx : filterMap.keySet()) {
           Config config = filterMap.get(idx);
           if (config.name != null) {
             if (config.param == null) {
@@ -5430,8 +5558,7 @@ public class ConvertToBam extends ChildFrame
 
         // applying filter list
         bam.filterRemoveAll();
-        for (int i = 0; i < configArray.length; i++) {
-          Config config = configArray[i];
+        for (Config config : configArray) {
           if (config != null) {
             BamFilterFactory.FilterInfo info = BamFilterFactory.getFilterInfo(config.name);
             if (info != null) {
@@ -5449,7 +5576,7 @@ public class ConvertToBam extends ChildFrame
       return false;
     }
 
-    // Saves data to specified INI file without user-interaction and optionally without feedback.
+    /** Saves data to specified INI file without user-interaction and optionally without feedback. */
     private boolean saveData(Path outFile, boolean silent)
     {
       boolean retVal = false;
@@ -5534,7 +5661,7 @@ public class ConvertToBam extends ChildFrame
       return retVal;
     }
 
-    // Clears all BAM session data
+    /** Clears all BAM session data. */
     private void resetData()
     {
       sectionFrames = null;
@@ -5543,7 +5670,7 @@ public class ConvertToBam extends ChildFrame
       sectionFilters = null;
     }
 
-    // Shows options dialog and returns whether user selected "Accept" or "Cancel"
+    /** Shows options dialog and returns whether user selected "Accept" or "Cancel". */
     private boolean getSelection(boolean isExport)
     {
       if (isExport) {
@@ -5573,7 +5700,7 @@ public class ConvertToBam extends ChildFrame
       return isAccepted();
     }
 
-    // Attempts to determine a fitting default name for the ini file.
+    /** Attempts to determine a fitting default name for the ini file. */
     private Path getDefaultIniName(String defaultName)
     {
       Path retVal = null;
@@ -5597,51 +5724,51 @@ public class ConvertToBam extends ChildFrame
       return retVal;
     }
 
-    // Returns whether the dialog options have been accepted.
+    /** Returns whether the dialog options have been accepted. */
     private boolean isAccepted()
     {
       return accepted;
     }
 
-    // Returns whether the frames option has been selected.
+    /** Returns whether the frames option has been selected. */
     private boolean isFramesSelected()
     {
       return (cbFrames.isEnabled() && cbFrames.isSelected());
     }
 
-    // Returns whether the center position option has been selected.
+    /** Returns whether the center position option has been selected. */
     private boolean isCenterSelected()
     {
       return (cbCenter.isEnabled() && cbCenter.isSelected());
     }
 
-    // Returns whether the cycle definition option has been selected.
+    /** Returns whether the cycle definition option has been selected. */
     private boolean isCyclesSelected()
     {
       return (cbCycles.isEnabled() && cbCycles.isSelected());
     }
 
-    // Returns whether the filter configuration option has been selected.
+    /** Returns whether the filter configuration option has been selected. */
     private boolean isFiltersSelected()
     {
       return (cbFilters.isEnabled() && cbFilters.isSelected());
     }
 
-    // Disposes the dialog and marks it as accepted
-    private void accept()
+    /** Disposes the dialog and marks it as accepted. */
+    private void acceptDialog()
     {
       setVisible(false);
       accepted = true;
     }
 
-    // Disposes the dialog and marks it as cancelled
+    /** Disposes the dialog and marks it as cancelled. */
     private void cancel()
     {
       setVisible(false);
       accepted = false;
     }
 
-    // Initializes the basic dialog layout
+    /** Initializes the basic dialog layout. */
     private void init()
     {
       setLayout(new BorderLayout());
@@ -5663,7 +5790,7 @@ public class ConvertToBam extends ChildFrame
         @Override
         public void actionPerformed(ActionEvent e)
         {
-          accept();
+          acceptDialog();
         }
       });
 

@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2018 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.graphics;
@@ -70,9 +70,11 @@ import org.infinity.gui.converter.ConvertToPvrz;
 import org.infinity.gui.converter.ConvertToTis;
 import org.infinity.resource.Closeable;
 import org.infinity.resource.Profile;
+import org.infinity.resource.Referenceable;
 import org.infinity.resource.Resource;
 import org.infinity.resource.ResourceFactory;
 import org.infinity.resource.ViewableContainer;
+import org.infinity.resource.key.BIFFResourceEntry;
 import org.infinity.resource.key.ResourceEntry;
 import org.infinity.resource.wed.Door;
 import org.infinity.resource.wed.Overlay;
@@ -84,7 +86,45 @@ import org.infinity.util.DynamicArray;
 import org.infinity.util.IntegerHashMap;
 import org.infinity.util.io.StreamUtils;
 
-public class TisResource implements Resource, Closeable, ActionListener, ChangeListener,
+/**
+ * This resource describes a tileset. There are currently two variants available:
+ * <ol>
+ * <li><b>Palette-based TIS</b>
+ * <p>
+ * TIS files are generally comprised of a large number of tiles, each of which
+ * consists of a palette and a rectangular block of pixels. Each pixel is an
+ * index into the associated palette. Each tile has its own palette and a block
+ * of pixels. The pixel data is not compressed.
+ * <p>
+ * Each tile consists of a 256 colour palette, with each entry being an RGBA value
+ * stored in BGRA order (note that the Alpha value is unused), followed by 8-bit
+ * pixel values, which are indices into the palette. The pixel values are row by
+ * row, from left to right and top to bottom. Index 0 is hardcoded to be the
+ * transparent index.
+ * </li>
+ * <li><b>PVRZ-based TIS</b>
+ * <p>
+ * This variant is only supported by {@link Profile.Engine#EE Enhanced Edition}
+ * games. Each tile definition refers to a block of pixels within an associated
+ * {@link PvrzResource PVRZ} file.
+ * <p>
+ * Each tile consists of a block of pixels that is defined in an associated PVRZ file.</li>
+ * </ol>
+ * TIS files contain only the graphics for an area - the location information is
+ * stored in a {@link WedResource WED} file.
+ * <p>
+ * Engine specific notes:
+ * <ul>
+ * <li>PST can only load TIS files when they are stored in a {@link BIFFResourceEntry BIFF} file.</li>
+ * <li>Palette-based TIS induces a noticeable performance hit and occasional visual
+ * glitches when used in {@link Profile.Engine#EE Enhanced Edition} games. It is
+ * highly recommended to use PVRZ-based TIS instead.</li>
+ * </ul>
+ *
+ * @see <a href="https://gibberlings3.github.io/iesdp/file_formats/ie_formats/tis_v1.htm">
+ * https://gibberlings3.github.io/iesdp/file_formats/ie_formats/tis_v1.htm</a>
+ */
+public class TisResource implements Resource, Closeable, Referenceable, ActionListener, ChangeListener,
                                      ItemListener, KeyListener, PropertyChangeListener
 {
   private enum Status { SUCCESS, CANCELLED, ERROR, UNSUPPORTED }
@@ -122,7 +162,7 @@ public class TisResource implements Resource, Closeable, ActionListener, ChangeL
   public void actionPerformed(ActionEvent event)
   {
     if (event.getSource() == buttonPanel.getControlByType(ButtonPanel.Control.FIND_REFERENCES)) {
-      new ReferenceSearcher(entry, panel.getTopLevelAncestor());
+      searchReferences(panel.getTopLevelAncestor());
     } else if (event.getSource() == miExport) {
       ResourceFactory.exportResource(entry, panel.getTopLevelAncestor());
     } else if (event.getSource() == miExportPaletteTis) {
@@ -363,6 +403,21 @@ public class TisResource implements Resource, Closeable, ActionListener, ChangeL
 
 //--------------------- End Interface Resource ---------------------
 
+//--------------------- Begin Interface Referenceable ---------------------
+
+  @Override
+  public boolean isReferenceable()
+  {
+    return true;
+  }
+
+  @Override
+  public void searchReferences(Component parent)
+  {
+    new ReferenceSearcher(entry, parent);
+  }
+
+//--------------------- End Interface Referenceable ---------------------
 
 //--------------------- Begin Interface Viewable ---------------------
 
@@ -493,7 +548,7 @@ public class TisResource implements Resource, Closeable, ActionListener, ChangeL
   private Path getTisFileName(Component parent, boolean enforceValidName)
   {
     Path retVal = null;
-    JFileChooser fc = new JFileChooser(Profile.getGameRoot().toFile());
+    JFileChooser fc = new JFileChooser(ResourceFactory.getExportFilePath().toFile());
     fc.setDialogTitle("Export resource");
     fc.setFileSelectionMode(JFileChooser.FILES_ONLY);
     FileNameExtensionFilter filter = new FileNameExtensionFilter("TIS files (*.tis)", "tis");
@@ -532,7 +587,7 @@ public class TisResource implements Resource, Closeable, ActionListener, ChangeL
   private Path getPngFileName(Component parent)
   {
     Path retVal = null;
-    JFileChooser fc = new JFileChooser(Profile.getGameRoot().toFile());
+    JFileChooser fc = new JFileChooser(ResourceFactory.getExportFilePath().toFile());
     fc.setDialogTitle("Export resource");
     fc.setFileSelectionMode(JFileChooser.FILES_ONLY);
     FileNameExtensionFilter filter = new FileNameExtensionFilter("PNG files (*.png)", "png");
@@ -591,7 +646,7 @@ public class TisResource implements Resource, Closeable, ActionListener, ChangeL
     Status retVal = Status.ERROR;
     if (output != null) {
       if (tileImages != null && !tileImages.isEmpty()) {
-        String note = "Converting tile %1$d / %2$d";
+        String note = "Converting tile %d / %d";
         int progressIndex = 0, progressMax = decoder.getTileCount();
         ProgressMonitor progress = null;
         if (showProgress) {
@@ -615,7 +670,6 @@ public class TisResource implements Resource, Closeable, ActionListener, ChangeL
 
           // writing tile data
           int[] palette = new int[255];
-          int[] hclPalette = new int[255];
           byte[] tilePalette = new byte[1024];
           byte[] tileData = new byte[64*64];
           BufferedImage image =
@@ -646,8 +700,7 @@ public class TisResource implements Resource, Closeable, ActionListener, ChangeL
             }
 
             int[] pixels = ((DataBufferInt)image.getRaster().getDataBuffer()).getData();
-            if (ColorConvert.medianCut(pixels, 255, palette, false)) {
-              ColorConvert.toHclPalette(palette, hclPalette);
+            if (ColorConvert.medianCut(pixels, 255, palette, true)) {
               // filling palette
               // first palette entry denotes transparency
               tilePalette[0] = tilePalette[2] = tilePalette[3] = 0; tilePalette[1] = (byte)255;
@@ -667,7 +720,7 @@ public class TisResource implements Resource, Closeable, ActionListener, ChangeL
                   if (palIndex != null) {
                     tileData[i] = (byte)(palIndex + 1);
                   } else {
-                    byte color = (byte)ColorConvert.nearestColor(pixels[i], hclPalette);
+                    byte color = (byte)ColorConvert.nearestColorRGB(pixels[i], palette, true);
                     tileData[i] = (byte)(color + 1);
                     colorCache.put(pixels[i], color);
                   }
@@ -681,7 +734,7 @@ public class TisResource implements Resource, Closeable, ActionListener, ChangeL
             bos.write(tileData);
           }
           image.flush(); image = null;
-          tileData = null; tilePalette = null; hclPalette = null; palette = null;
+          tileData = null; tilePalette = null; palette = null;
         } catch (Exception e) {
           retVal = Status.ERROR;
           e.printStackTrace();
@@ -749,7 +802,10 @@ public class TisResource implements Resource, Closeable, ActionListener, ChangeL
           // processing tiles
           final BinPack2D.HeuristicRules binPackRule = BinPack2D.HeuristicRules.BOTTOM_LEFT_RULE;
           final int pageDim = 16;   // 16 tiles a 64x64 pixels
-          int tisWidth = tileGrid.getTileColumns();
+          int tisWidth = 1;
+          if (ovl != null) {
+            tisWidth = ((IsNumeric)ovl.getAttribute(Overlay.WED_OVERLAY_WIDTH)).getValue();
+          }
           int tisHeight = (numTiles+tisWidth-1) / tisWidth;
           int numTilesPrimary = numTiles;
           if (ovl != null) {
@@ -1002,7 +1058,7 @@ public class TisResource implements Resource, Closeable, ActionListener, ChangeL
     DxtEncoder.DxtType dxtType = DxtEncoder.DxtType.DXT1;
     int dxtCode = 7;  // PVR code for DXT1
     byte[] output = new byte[DxtEncoder.calcImageSize(1024, 1024, dxtType)];
-    String note = "Generating PVRZ file %1$s / %2$s";
+    String note = "Generating PVRZ file %s / %s";
     if (progress != null) {
       progress.setMaximum(pageList.size() + 1);
       progress.setProgress(1);
@@ -1101,7 +1157,7 @@ public class TisResource implements Resource, Closeable, ActionListener, ChangeL
         tisName = tisName.substring(0, extOfs);
       }
       if (Pattern.matches(".{2,7}", tisName)) {
-        String pvrzName = String.format("%1$s%2$s%3$02d.PVRZ", tisName.substring(0, 1),
+        String pvrzName = String.format("%s%s%02d.PVRZ", tisName.substring(0, 1),
                                         tisName.substring(2, tisName.length()), page);
         return path.resolve(pvrzName);
       }
@@ -1146,8 +1202,8 @@ public class TisResource implements Resource, Closeable, ActionListener, ChangeL
         String fmt, newName = null;
         int maxNum;
         switch (name.length()) {
-          case 0:  fmt = name + "%1$s02d"; maxNum = 99; break;
-          default: fmt = name + "%1$s01d"; maxNum = 9; break;
+          case 0:  fmt = name + "%s02d"; maxNum = 99; break;
+          default: fmt = name + "%s01d"; maxNum = 9; break;
         }
         for (int i = 0; i < maxNum; i++) {
           String s = String.format(fmt, i) + (isNight ? "N" : "") + ext;
@@ -1176,10 +1232,7 @@ public class TisResource implements Resource, Closeable, ActionListener, ChangeL
     // Try to fetch the correct width from an associated WED if available
     if (entry != null) {
       try {
-        String tisNameBase = entry.getResourceName();
-        if (tisNameBase.lastIndexOf('.') > 0) {
-          tisNameBase = tisNameBase.substring(0, tisNameBase.lastIndexOf('.'));
-        }
+        String tisNameBase = entry.getResourceRef();
         ResourceEntry wedEntry = null;
         while (tisNameBase.length() >= 6) {
           String wedFileName = tisNameBase + ".WED";

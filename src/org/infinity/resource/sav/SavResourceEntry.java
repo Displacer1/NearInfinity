@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.sav;
@@ -48,29 +48,17 @@ public class SavResourceEntry extends ResourceEntry implements Writeable
   {
     comprLength = 0;
     uncomprLength = 0;
-    fileName = entry.toString();
+    fileName = entry.getResourceName();
     byte[] udata = StreamUtils.toArray(entry.getResourceBuffer(true));
-    if (udata.length == 0) {
-      uncomprLength = 0;
-      comprLength = 8;
-      udata = new byte[]{0x78, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01};
-    } else {
-      cdata = StreamUtils.getByteBuffer(udata.length * 2);
-      try (DeflaterOutputStream dos = new DeflaterOutputStream(new ByteBufferOutputStream(cdata),
-                                                               new Deflater(Deflater.BEST_COMPRESSION))) {
-        dos.write(udata);
-        dos.finish();
-      }
-      cdata.flip();
-      uncomprLength = udata.length;
-      comprLength = cdata.limit();
-//      Deflater deflater = new Deflater(Deflater.BEST_COMPRESSION);
-//      deflater.setInput(udata);
-//      deflater.finish();
-//      int clength = deflater.deflate(cdata.array());
-//      cdata.limit(clength);
-//      comprLength = clength;
+    cdata = StreamUtils.getByteBuffer(udata.length * 2 + 8);
+    try (DeflaterOutputStream dos = new DeflaterOutputStream(new ByteBufferOutputStream(cdata),
+                                                             new Deflater(Deflater.BEST_COMPRESSION))) {
+      dos.write(udata);
+      dos.finish();
     }
+    cdata.flip();
+    uncomprLength = udata.length;
+    comprLength = cdata.limit();
   }
 
   public int getEndOffset()
@@ -91,9 +79,19 @@ public class SavResourceEntry extends ResourceEntry implements Writeable
   }
 
   @Override
+  public String getResourceRef()
+  {
+    int pos = fileName.lastIndexOf('.');
+    if (pos >= 0)
+      return fileName.substring(0, pos);
+    else
+      return fileName;
+  }
+
+  @Override
   public String getExtension()
   {
-    return fileName.substring(fileName.lastIndexOf(".") + 1).toUpperCase(Locale.ENGLISH);
+    return fileName.substring(fileName.lastIndexOf('.') + 1).toUpperCase(Locale.ENGLISH);
   }
 
   @Override

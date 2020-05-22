@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.are;
@@ -7,11 +7,11 @@ package org.infinity.resource.are;
 import java.nio.ByteBuffer;
 
 import org.infinity.datatype.AreResourceRef;
-import org.infinity.datatype.Bitmap;
 import org.infinity.datatype.DecNumber;
 import org.infinity.datatype.IdsBitmap;
 import org.infinity.datatype.ResourceRef;
 import org.infinity.datatype.Song2daBitmap;
+import org.infinity.datatype.TableBitmap;
 import org.infinity.datatype.Unknown;
 import org.infinity.resource.AbstractStruct;
 import org.infinity.resource.Profile;
@@ -39,12 +39,9 @@ public final class Song extends AbstractStruct // implements AddRemovable
   public static final String ARE_SONGS_AMBIENT_VOLUME_NIGHT = "Main ambient volume (night)";
   public static final String ARE_SONGS_REVERB               = "Reverb";
 
-  public static final String[] s_reverb = {"None", "Small room", "Medium room",
-                                           "Large room", "Outside", "Dungeon"};
-
-  Song(AbstractStruct superStruct, ByteBuffer buffer, int offset) throws Exception
+  Song(AreResource are, ByteBuffer buffer, int offset) throws Exception
   {
-    super(superStruct, ARE_SONGS, buffer, offset);
+    super(are, ARE_SONGS, buffer, offset);
   }
 
   @Override
@@ -60,16 +57,13 @@ public final class Song extends AbstractStruct // implements AddRemovable
     addField(new Song2daBitmap(buffer, offset + 28, 4, ARE_SONGS_VICTORY_ALTERNATE));
     addField(new Song2daBitmap(buffer, offset + 32, 4, ARE_SONGS_BATTLE_ALTERNATE));
     addField(new Song2daBitmap(buffer, offset + 36, 4, ARE_SONGS_DEFEAT_ALTERNATE));
-    if (getSuperStruct() != null) {
-      addField(new AreResourceRef(buffer, offset + 40, ARE_SONGS_AMBIENT_DAY_1,
-                                  (AreResource)getSuperStruct()));
-      addField(new AreResourceRef(buffer, offset + 48, ARE_SONGS_AMBIENT_DAY_2,
-                                  (AreResource)getSuperStruct()));
+    final AreResource are = (AreResource)getParent();
+    if (are != null && !Profile.isEnhancedEdition()) {
+      addField(new AreResourceRef(buffer, offset + 40, ARE_SONGS_AMBIENT_DAY_1, are));
+      addField(new AreResourceRef(buffer, offset + 48, ARE_SONGS_AMBIENT_DAY_2, are));
       addField(new DecNumber(buffer, offset + 56, 4, ARE_SONGS_AMBIENT_VOLUME_DAY));
-      addField(new AreResourceRef(buffer, offset + 60, ARE_SONGS_AMBIENT_NIGHT_1,
-                                  (AreResource)getSuperStruct()));
-      addField(new AreResourceRef(buffer, offset + 68, ARE_SONGS_AMBIENT_NIGHT_2,
-                                  (AreResource)getSuperStruct()));
+      addField(new AreResourceRef(buffer, offset + 60, ARE_SONGS_AMBIENT_NIGHT_1, are));
+      addField(new AreResourceRef(buffer, offset + 68, ARE_SONGS_AMBIENT_NIGHT_2, are));
       addField(new DecNumber(buffer, offset + 76, 4, ARE_SONGS_AMBIENT_VOLUME_NIGHT));
     }
     else {
@@ -83,8 +77,8 @@ public final class Song extends AbstractStruct // implements AddRemovable
     if (ResourceFactory.resourceExists("REVERB.IDS")) {
       addField(new IdsBitmap(buffer, offset + 80, 4, ARE_SONGS_REVERB, "REVERB.IDS"));
       addField(new Unknown(buffer, offset + 84, 60));
-    } else if (Profile.getEngine() == Profile.Engine.PST || Profile.getGame() == Profile.Game.PSTEE) {
-      addField(new Bitmap(buffer, offset + 80, 4, ARE_SONGS_REVERB, s_reverb));
+    } else if (ResourceFactory.resourceExists("REVERB.2DA")) {
+      addField(new TableBitmap(buffer, offset + 80, 4, ARE_SONGS_REVERB, "REVERB.2DA"));
       addField(new Unknown(buffer, offset + 84, 60));
     } else {
       addField(new Unknown(buffer, offset + 80, 64));
@@ -92,4 +86,3 @@ public final class Song extends AbstractStruct // implements AddRemovable
     return offset + 144;
   }
 }
-

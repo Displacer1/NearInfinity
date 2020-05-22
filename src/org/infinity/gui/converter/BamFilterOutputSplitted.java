@@ -194,7 +194,7 @@ public class BamFilterOutputSplitted extends BamFilterBaseOutput
 
     String[] items = new String[7];
     for (int i = 0; i < items.length; i++) {
-      items[i] = String.format("%1$d", i+1);
+      items[i] = String.format("%d", i+1);
     }
     cbSuffixDigits = new JComboBox<>(items);
     cbSuffixDigits.setSelectedIndex(1);
@@ -366,6 +366,8 @@ public class BamFilterOutputSplitted extends BamFilterBaseOutput
       // creating a format string for BAM output filenames
       String bamFileName = getConverter().getBamOutput().toString();
       String ext = "BAM";
+      int suffixStart = ((Integer)spinnerSuffixStart.getValue()).intValue();
+      int suffixStep = ((Integer)spinnerSuffixStep.getValue()).intValue();
       int idx = bamFileName.lastIndexOf('.');
       if (idx >= 0) {
         ext = bamFileName.substring(idx+1);
@@ -394,8 +396,9 @@ public class BamFilterOutputSplitted extends BamFilterBaseOutput
         segmentDecoder.setCyclesList(decoder.getCyclesList());
 
         // converting segmented BAM structure
-        if (!convertBam(FileManager.resolve(String.format(fmtBamFileName, segIdx)), segmentDecoder)) {
-          throw new Exception(String.format("Error converting segment %1$d/%2$d", segIdx + 1, segmentCount));
+        int suffix = suffixStart + segIdx * suffixStep;
+        if (!convertBam(FileManager.resolve(String.format(fmtBamFileName, suffix)), segmentDecoder)) {
+          throw new Exception(String.format("Error converting segment %d/%d", segIdx + 1, segmentCount));
         }
 
         // resetting decoder

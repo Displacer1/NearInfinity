@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2018 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.other;
@@ -21,9 +21,38 @@ import org.infinity.resource.AbstractStruct;
 import org.infinity.resource.HasViewerTabs;
 import org.infinity.resource.Resource;
 import org.infinity.resource.StructEntry;
+import org.infinity.resource.graphics.BamResource;
 import org.infinity.resource.key.ResourceEntry;
+import org.infinity.resource.sound.SoundResource;
 import org.infinity.search.SearchOptions;
 
+/**
+ * This resource describes visual "spell casting" effects ({@link BamResource BAM}
+ * files) with optional sounds ({@link SoundResource WAVC} files). VVCs can be
+ * invoked by some script actions (e.g. {@code CreateVisualEffect},
+ * {@code CreateVisualEffectObject}) and by some effects (e.g. "Play 3D effect").
+ *
+ * VVC Files use a 3D co-ordinates system when playing the exact location of VVC
+ * animations. Infinity Engine Games are rendered from an isometric angle; this
+ * means that the X-Y-Z axis need to be percieved within this isometric frame to
+ * properly understand how VVC files will play:
+ * <code><pre>
+ *     Z   Y
+ *  O  |  /
+ * /|\ | /
+ * _+_ |/
+ *      \
+ *       \X
+ * </pre></code>
+ * <ul>
+ * <li>X is up or down</li>
+ * <li>Y is the distance between the feet of the character and the animation</li>
+ * <li>Z is the distance between the head of the character and the animation</li>
+ * </ul>
+ *
+ * @see <a href="https://gibberlings3.github.io/iesdp/file_formats/ie_formats/vvc_v1.htm">
+ * https://gibberlings3.github.io/iesdp/file_formats/ie_formats/vvc_v1.htm</a>
+ */
 public final class VvcResource extends AbstractStruct implements Resource, HasViewerTabs
 {
   // VVC-specific field labels
@@ -62,14 +91,13 @@ public final class VvcResource extends AbstractStruct implements Resource, HasVi
       "3D blend", "Not covered by wall", "Persist through time stop", "Ignore dream palette",
       "2D blend"};
   public static final String[] s_tint = {
-      "No flags set", "Not light source", "Light source", "Internal brightness", "Time stopped", "",
-      "Internal gamma", "Non-reserved palette", "Full palette", "", "Dream palette"};
+      "No flags set", "Not light source", "Light source", "Internal brightness", "Time stopped", null,
+      "Internal gamma", "Non-reserved palette", "Full palette", null, "Dream palette"};
   public static final String[] s_seq = {
       "No flags set", "Looping", "Special lighting", "Modify for height", "Draw animation", "Custom palette",
       "Purgeable", "Not covered by wall", "Mid-level brighten", "High-level brighten"};
   public static final String[] s_face = {"Use current", "Face target", "Follow target", "Follow path",
                                          "Lock orientation"};
-  public static final String[] s_noyes = {"No", "Yes"};
 
   private StructHexViewer hexViewer;
 
@@ -92,7 +120,7 @@ public final class VvcResource extends AbstractStruct implements Resource, HasVi
     addField(new Unknown(buffer, offset + 36, 4));
     addField(new DecNumber(buffer, offset + 40, 4, VVC_POSITION_X));
     addField(new DecNumber(buffer, offset + 44, 4, VVC_POSITION_Y));
-    addField(new Bitmap(buffer, offset + 48, 4, VVC_DRAW_ORIENTED, s_noyes));
+    addField(new Bitmap(buffer, offset + 48, 4, VVC_DRAW_ORIENTED, OPTION_NOYES));
     addField(new DecNumber(buffer, offset + 52, 4, VVC_FRAME_RATE));
     addField(new DecNumber(buffer, offset + 56, 4, VVC_NUM_ORIENTATIONS));
     addField(new DecNumber(buffer, offset + 60, 4, VVC_PRIMARY_ORIENTATION));
@@ -107,7 +135,7 @@ public final class VvcResource extends AbstractStruct implements Resource, HasVi
     addField(new DecNumber(buffer, offset + 104, 4, VVC_FIRST_ANIMATION_INDEX));
     addField(new DecNumber(buffer, offset + 108, 4, VVC_SECOND_ANIMATION_INDEX));
     addField(new DecNumber(buffer, offset + 112, 4, VVC_CURRENT_ANIMATION_INDEX));
-    addField(new Bitmap(buffer, offset + 116, 4, VVC_CONTINUOUS_PLAYBACK, s_noyes));
+    addField(new Bitmap(buffer, offset + 116, 4, VVC_CONTINUOUS_PLAYBACK, OPTION_NOYES));
     addField(new ResourceRef(buffer, offset + 120, VVC_SOUND_STARTING, "WAV"));
     addField(new ResourceRef(buffer, offset + 128, VVC_SOUND_DURATION, "WAV"));
     addField(new ResourceRef(buffer, offset + 136, VVC_ALPHA_MASK, "BAM"));
@@ -154,8 +182,10 @@ public final class VvcResource extends AbstractStruct implements Resource, HasVi
     viewer.addTabChangeListener(hexViewer);
   }
 
-  // Called by "Extended Search"
-  // Checks whether the specified resource entry matches all available search options.
+  /**
+   * Called by "Extended Search"
+   * Checks whether the specified resource entry matches all available search options.
+   */
   public static boolean matchSearchOptions(ResourceEntry entry, SearchOptions searchOptions)
   {
     if (entry != null && searchOptions != null) {
@@ -204,4 +234,3 @@ public final class VvcResource extends AbstractStruct implements Resource, HasVi
     return false;
   }
 }
-

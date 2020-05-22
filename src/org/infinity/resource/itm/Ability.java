@@ -47,14 +47,13 @@ public final class Ability extends AbstractAbility implements AddRemovable, HasA
   public static final String ITM_ABIL_IS_BOLT             = "Is bolt?";
   public static final String ITM_ABIL_IS_BULLET           = "Is bullet?";
 
-  public static final String[] s_noyes = {"No", "Yes"};
   public static final String[] s_launcher = {"None", "Bow", "Crossbow", "Sling"};
   public static final String[] s_abilityuse = {"", "Weapon", "Spell", "Item", "Ability", "reserved"};
   public static final String[] s_recharge = {
     "No flags set", "Add strength bonus", "Breakable", "EE: Damage strength bonus",
-    "EE: THAC0 strength bonus", "", "", "", "", "", "",
-    "Hostile", "Recharge after resting", "", "", "", "", "Bypass armor", "Keen edge", "",
-    "", "", "", "", "", "", "Ex: Toggle backstab", "Ex: Cannot target invisible"};
+    "EE: THAC0 strength bonus", null, null, null, null, null, "EE: Break Sanctuary;Ignored for Target: Caster",
+    "Hostile", "Recharge after resting", null, null, null, null, "Bypass armor", "Keen edge", null,
+    null, null, null, null, null, null, "Ex: Toggle backstab", "EE/Ex: Cannot target invisible"};
 
   Ability() throws Exception
   {
@@ -170,7 +169,7 @@ public final class Ability extends AbstractAbility implements AddRemovable, HasA
     addField(new DecNumber(buffer, offset + 34, 2, ABILITY_NUM_CHARGES));
     addField(new Bitmap(buffer, offset + 36, 2, ABILITY_WHEN_DRAINED, s_drain));
     addField(new Flag(buffer, offset + 38, 4, ITM_ABIL_FLAGS, s_recharge));
-    if (ResourceFactory.resourceExists("PROJECTL.IDS")) {
+    if (ResourceFactory.resourceExists("PROJECTL.IDS") && ResourceFactory.resourceExists("MISSILE.IDS")) {
       addField(new ProRef(buffer, offset + 42, ABILITY_PROJECTILE));
     } else if (Profile.getEngine() == Profile.Engine.PST) {
       addField(new Bitmap(buffer, offset + 42, 2, ABILITY_PROJECTILE, s_proj_pst));
@@ -182,9 +181,9 @@ public final class Ability extends AbstractAbility implements AddRemovable, HasA
     addField(new DecNumber(buffer, offset + 44, 2, ITM_ABIL_ANIM_OVERHAND));
     addField(new DecNumber(buffer, offset + 46, 2, ITM_ABIL_ANIM_BACKHAND));
     addField(new DecNumber(buffer, offset + 48, 2, ITM_ABIL_ANIM_THRUST));
-    addField(new Bitmap(buffer, offset + 50, 2, ITM_ABIL_IS_ARROW, s_noyes));
-    addField(new Bitmap(buffer, offset + 52, 2, ITM_ABIL_IS_BOLT, s_noyes));
-    addField(new Bitmap(buffer, offset + 54, 2, ITM_ABIL_IS_BULLET, s_noyes));
+    addField(new Bitmap(buffer, offset + 50, 2, ITM_ABIL_IS_ARROW, OPTION_NOYES));
+    addField(new Bitmap(buffer, offset + 52, 2, ITM_ABIL_IS_BOLT, OPTION_NOYES));
+    addField(new Bitmap(buffer, offset + 54, 2, ITM_ABIL_IS_BULLET, OPTION_NOYES));
 
     return offset + 56;
   }

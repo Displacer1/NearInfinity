@@ -574,8 +574,8 @@ final class Viewer extends JPanel implements ActionListener, TableModelListener,
   private static class PropertiesPanel extends JPanel implements ActionListener
   {
     // Format strings used to display common properties of a control
-    private static final String FMT_POSITION = "X: %1$d, Y: %2$d";
-    private static final String FMT_SIZE = "W: %1$d, H: %2$d";
+    private static final String FMT_POSITION = "X: %d, Y: %d";
+    private static final String FMT_SIZE = "W: %d, H: %d";
 
     private final List<ChangeListener> listeners = new ArrayList<ChangeListener>();
     private final JRadioButton[] rbButtonState = new JRadioButton[4];
@@ -886,6 +886,10 @@ final class Viewer extends JPanel implements ActionListener, TableModelListener,
       Dimension dim = getDimension();
       dim.width += p.x;
       dim.height += p.y;
+      if (Profile.getGame() == Profile.Game.IWD2) {
+        dim.width = Math.max(800, dim.width);
+        dim.height = Math.max(600, dim.height);
+      }
       return dim;
     }
 
@@ -1471,7 +1475,7 @@ final class Viewer extends JPanel implements ActionListener, TableModelListener,
     private static boolean isResourceIgnored(String resName, int cycleIdx, int frameIdx)
     {
       if (resName != null && !resName.isEmpty()) {
-        return ignoreResourceSet.contains(String.format("%1$s:%2$d:%3$d",
+        return ignoreResourceSet.contains(String.format("%s:%d:%d",
                                                         resName.toUpperCase(Locale.ENGLISH), cycleIdx, frameIdx));
       } else {
         return true;

@@ -1,10 +1,11 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.graphics;
 
 import java.awt.BorderLayout;
+import java.awt.Component;
 import java.awt.Graphics2D;
 import java.awt.Image;
 import java.awt.Transparency;
@@ -44,6 +45,7 @@ import org.infinity.gui.RenderCanvas;
 import org.infinity.gui.WindowBlocker;
 import org.infinity.icon.Icons;
 import org.infinity.resource.Profile;
+import org.infinity.resource.Referenceable;
 import org.infinity.resource.Resource;
 import org.infinity.resource.ResourceFactory;
 import org.infinity.resource.ViewableContainer;
@@ -53,7 +55,14 @@ import org.infinity.util.DynamicArray;
 import org.infinity.util.IntegerHashMap;
 import org.infinity.util.io.StreamUtils;
 
-public class MosResource implements Resource, ActionListener, PropertyChangeListener
+/**
+ * This resource describes static graphics in a tile based bitmap format.
+ * Such files are used for mini-maps and GUI backgrounds.
+ *
+ * @see <a href="https://gibberlings3.github.io/iesdp/file_formats/ie_formats/mos_v1.htm">
+ * https://gibberlings3.github.io/iesdp/file_formats/ie_formats/mos_v1.htm</a>
+ */
+public class MosResource implements Resource, Referenceable, ActionListener, PropertyChangeListener
 {
   private static final ButtonPanel.Control Properties = ButtonPanel.Control.CUSTOM_1;
 
@@ -94,7 +103,7 @@ public class MosResource implements Resource, ActionListener, PropertyChangeList
         WindowBlocker.blockWindow(false);
       }
     } else if (buttonPanel.getControlByType(ButtonPanel.Control.FIND_REFERENCES) == event.getSource()) {
-      new ReferenceSearcher(entry, panel.getTopLevelAncestor());
+      searchReferences(panel.getTopLevelAncestor());
     } else if (buttonPanel.getControlByType(Properties) == event.getSource()) {
       showProperties();
     } else if (event.getSource() == miExport) {
@@ -111,7 +120,7 @@ public class MosResource implements Resource, ActionListener, PropertyChangeList
           try {
             ByteBuffer buffer = entry.getResourceBuffer();
             buffer = Compressor.decompress(buffer);
-            ResourceFactory.exportResource(entry, buffer, entry.toString(), panel.getTopLevelAncestor());
+            ResourceFactory.exportResource(entry, buffer, entry.getResourceName(), panel.getTopLevelAncestor());
           } catch (Exception e) {
             e.printStackTrace();
             JOptionPane.showMessageDialog(panel.getTopLevelAncestor(),
@@ -131,7 +140,7 @@ public class MosResource implements Resource, ActionListener, PropertyChangeList
         try {
           ByteBuffer buffer = entry.getResourceBuffer();
           buffer = Compressor.compress(buffer, "MOSC", "V1  ");
-          ResourceFactory.exportResource(entry, buffer, entry.toString(), panel.getTopLevelAncestor());
+          ResourceFactory.exportResource(entry, buffer, entry.getResourceName(), panel.getTopLevelAncestor());
         } catch (Exception e) {
           e.printStackTrace();
           JOptionPane.showMessageDialog(panel.getTopLevelAncestor(),
@@ -140,9 +149,8 @@ public class MosResource implements Resource, ActionListener, PropertyChangeList
         }
       }
     } else if (event.getSource() == miExportPNG) {
-      try {
-        ByteArrayOutputStream os = new ByteArrayOutputStream();
-        String fileName = entry.toString().replace(".MOS", ".PNG");
+      try (final ByteArrayOutputStream os = new ByteArrayOutputStream()) {
+        final String fileName = StreamUtils.replaceFileExtension(entry.getResourceName(), "PNG");
         boolean bRet = false;
         WindowBlocker.blockWindow(true);
         try {
@@ -160,8 +168,6 @@ public class MosResource implements Resource, ActionListener, PropertyChangeList
                                         "Error while exporting " + entry, "Error",
                                         JOptionPane.ERROR_MESSAGE);
         }
-        os.close();
-        os = null;
       } catch (Exception e) {
         e.printStackTrace();
       }
@@ -196,7 +202,7 @@ public class MosResource implements Resource, ActionListener, PropertyChangeList
         if (mosData != null) {
           if (mosData.length > 0) {
             ResourceFactory.exportResource(entry, StreamUtils.getByteBuffer(mosData),
-                                           entry.toString(), panel.getTopLevelAncestor());
+                                           entry.getResourceName(), panel.getTopLevelAncestor());
           } else {
             JOptionPane.showMessageDialog(panel.getTopLevelAncestor(),
                                           "Export has been cancelled." + entry, "Information",
@@ -223,6 +229,22 @@ public class MosResource implements Resource, ActionListener, PropertyChangeList
   }
 
 //--------------------- End Interface Resource ---------------------
+
+//--------------------- Begin Interface Referenceable ---------------------
+
+  @Override
+  public boolean isReferenceable()
+  {
+    return true;
+  }
+
+  @Override
+  public void searchReferences(Component parent)
+  {
+    new ReferenceSearcher(entry, parent);
+  }
+
+//--------------------- End Interface Referenceable ---------------------
 
 //--------------------- Begin Interface Viewable ---------------------
 
@@ -447,7 +469,7 @@ public class MosResource implements Resource, ActionListener, PropertyChangeList
       DynamicArray.putInt(buf, 16, 64);
       DynamicArray.putInt(buf, 20, palOfs);
 
-      String note = "Converting tile %1$d / %2$d";
+      String note = "Converting tile %d / %d";
       int progressIndex = 0, progressMax = tileCount;
       ProgressMonitor progress =
           new ProgressMonitor(panel.getTopLevelAncestor(), "Converting MOS...",
@@ -472,7 +494,6 @@ public class MosResource implements Resource, ActionListener, PropertyChangeList
 
       // applying color reduction to each tile
       int[] palette = new int[255];
-      int[] hclPalette = new int[255];
       byte[] tilePalette = new byte[1024];
       byte[] tileData = new byte[64*64];
       int curPalOfs = palOfs, curTableOfs = tableOfs, curDataOfs = dataOfs;
@@ -490,8 +511,7 @@ public class MosResource implements Resource, ActionListener, PropertyChangeList
         }
 
         int[] pixels = tileList.get(tileIdx);
-        if (ColorConvert.medianCut(pixels, 255, palette, false)) {
-          ColorConvert.toHclPalette(palette, hclPalette);
+        if (ColorConvert.medianCut(pixels, 255, palette, true)) {
           // filling palette
           // first palette entry denotes transparency
           tilePalette[0] = tilePalette[2] = tilePalette[3] = 0; tilePalette[1] = (byte)255;
@@ -511,7 +531,7 @@ public class MosResource implements Resource, ActionListener, PropertyChangeList
               if (palIndex != null) {
                 tileData[i] = (byte)(palIndex + 1);
               } else {
-                byte color = (byte)ColorConvert.nearestColor(pixels[i], hclPalette);
+                byte color = (byte)ColorConvert.nearestColorRGB(pixels[i], palette, true);
                 tileData[i] = (byte)(color + 1);
                 colorCache.put(pixels[i], color);
               }
@@ -530,7 +550,7 @@ public class MosResource implements Resource, ActionListener, PropertyChangeList
         curDataOfs += pixels.length;
       }
       tileList.clear(); tileList = null;
-      tileData = null; tilePalette = null; hclPalette = null; palette = null;
+      tileData = null; tilePalette = null; palette = null;
 
       // optionally compressing to MOSC V1
       if (compressed) {

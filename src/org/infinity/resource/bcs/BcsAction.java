@@ -5,6 +5,8 @@
 package org.infinity.resource.bcs;
 
 import java.awt.Point;
+import java.util.Arrays;
+import java.util.Comparator;
 
 import org.infinity.util.StringBufferStream;
 
@@ -79,6 +81,16 @@ public class BcsAction extends BcsStructureBase
     return sb.toString();
   }
 
+  @Override
+  public String toString()
+  {
+    try {
+      return toByteCode();
+    } catch (Exception e) {
+      return e.getMessage();
+    }
+  }
+
   /**
    * Attempts to find the best matching function signature for the currently defined
    * action parameters.
@@ -88,16 +100,21 @@ public class BcsAction extends BcsStructureBase
   {
     Signatures.Function retVal = null;
 
-    Signatures.Function[] functions = signatures.getFunction(id);
+    Signatures.Function[] functions = getSortedFunction(id);
     if (functions != null && functions.length > 0) {
       if (functions.length == 1) {
         retVal = functions[0];
       } else {
-        int pnum = Integer.MAX_VALUE;
+        // weighting parameter types (strings are most important)
+        int weightI = 1;
+        int weightO = 2;
+        int weightP = 4;
+        int weightS = 8;
+        int bestScore = Integer.MAX_VALUE;  // lower is better
         Signatures.Function fallback = null;
         for (Signatures.Function f: functions) {
+          int sidx = 0; // tracks usage of strings
           int pi = 0, ps = 0, po = 0, pp = 0;
-//          boolean halfString = false; // to keep track of splitted strings
           for (int i = 0, cnt = f.getNumParameters(); i < cnt; i++) {
             Signatures.Function.Parameter param = f.getParameter(i);
             switch (param.getType()) {
@@ -106,12 +123,7 @@ public class BcsAction extends BcsStructureBase
                 break;
               case Signatures.Function.Parameter.TYPE_STRING:
                 ps++;
-//                if (param.isCombinedString()) {
-//                  halfString = !halfString;
-//                }
-//                if (!halfString) {
-//                  ps++;
-//                }
+                sidx += param.isCombinedString() ? 1 : 2;
                 break;
               case Signatures.Function.Parameter.TYPE_OBJECT:
                 po++;
@@ -134,13 +146,19 @@ public class BcsAction extends BcsStructureBase
             }
           }
 
-          for (int i = 0; i < 4; i++) {
-            try {
-              if (!getStringParam(f, i).isEmpty()) {
-                ps--;
+          if ((sidx < 2 && !a8.isEmpty()) ||
+              (sidx < 4 && !a9.isEmpty())) {
+            // don't choose if string arguments are left
+            ps = -1;
+          } else {
+            for (int i = 0; i < 4; i++) {
+              try {
+                if (!getStringParam(f, i).isEmpty()) {
+                  ps--;
+                }
+              } catch (IllegalArgumentException e) {
+                break;
               }
-            } catch (IllegalArgumentException e) {
-              break;
             }
           }
 
@@ -155,12 +173,10 @@ public class BcsAction extends BcsStructureBase
           }
 
           // finding match
-          if (pi == 0 && ps == 0 && po == 0 && pp == 0 && f.getNumParameters() < pnum) {
+          int score = Math.abs(pi * weightI + ps * weightS + po * weightO + pp * weightP);
+          if (score < bestScore) {
+            bestScore = score;
             retVal = f;
-            pnum = f.getNumParameters();
-          } else if (retVal == f && pi >= 0 && ps >= 0 && po >= 0 && pp >= 0) {
-            retVal = f;
-            pnum = f.getNumParameters();
           }
         }
 
@@ -297,5 +313,26 @@ public class BcsAction extends BcsStructureBase
           throw new Exception("Invalid BCS action code at position " + cnt);
       }
     }
+  }
+
+  // Helper method: Returns a sorted list of function signatures matching the specified function id.
+  private Signatures.Function[] getSortedFunction(int id)
+  {
+    Signatures.Function[] functions = signatures.getFunction(id);
+    Arrays.sort(functions, new Comparator<Signatures.Function>() {
+      @Override
+      public int compare(Signatures.Function o1, Signatures.Function o2)
+      {
+        if (o1 != null && o2 != null)
+          return o1.getName().compareTo(o2.getName());
+        else if (o1 == null && o2 == null)
+          return 0;
+        else if (o1 != null && o2 == null)
+          return -1;
+        else
+          return 1;
+      }
+    });
+    return functions;
   }
 }

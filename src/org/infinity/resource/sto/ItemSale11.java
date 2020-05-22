@@ -21,6 +21,7 @@ public final class ItemSale11 extends AbstractStruct implements AddRemovable
   // STO/ItemSale-specific field labels
   public static final String STO_SALE                 = "Item for sale";
   public static final String STO_SALE_ITEM            = "Item";
+  public static final String STO_SALE_EXPIRATION      = "Expiration time";
   public static final String STO_SALE_QUANTITY_FMT    = "Quantity/Charges %d";
   public static final String STO_SALE_FLAGS           = "Flags";
   public static final String STO_SALE_NUM_IN_STOCK    = "# in stock";
@@ -28,7 +29,6 @@ public final class ItemSale11 extends AbstractStruct implements AddRemovable
   public static final String STO_SALE_TRIGGER         = "Sale trigger";
 
   public static final String[] s_itemflag = {"No flags set", "Identified", "Not stealable", "Stolen"};
-  public static final String[] s_noyes = { "No", "Yes" };
 
   ItemSale11() throws Exception
   {
@@ -54,13 +54,13 @@ public final class ItemSale11 extends AbstractStruct implements AddRemovable
   public int read(ByteBuffer buffer, int offset) throws Exception
   {
     addField(new ResourceRef(buffer, offset, STO_SALE_ITEM, "ITM"));
-    addField(new Unknown(buffer, offset + 8, 2));
+    addField(new DecNumber(buffer, offset + 8, 2, STO_SALE_EXPIRATION));
     for (int i = 0; i < 3; i++) {
       addField(new DecNumber(buffer, offset + 10 + (i * 2), 2, String.format(STO_SALE_QUANTITY_FMT, i+1)));
     }
     addField(new Flag(buffer, offset + 16, 4, STO_SALE_FLAGS, s_itemflag));
     addField(new DecNumber(buffer, offset + 20, 4, STO_SALE_NUM_IN_STOCK));
-    addField(new Bitmap(buffer, offset + 24, 4, STO_SALE_INFINITE_SUPPLY, s_noyes));
+    addField(new Bitmap(buffer, offset + 24, 4, STO_SALE_INFINITE_SUPPLY, OPTION_NOYES));
     addField(new StringRef(buffer, offset + 28, STO_SALE_TRIGGER));
     addField(new Unknown(buffer, offset + 32, 56));
     return offset + 88;

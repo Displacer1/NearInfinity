@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.are;
@@ -8,9 +8,11 @@ import java.awt.Component;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 import javax.swing.BorderFactory;
 import javax.swing.JComponent;
@@ -19,6 +21,8 @@ import javax.swing.JScrollPane;
 import org.infinity.datatype.DecNumber;
 import org.infinity.datatype.Flag;
 import org.infinity.datatype.HexNumber;
+import org.infinity.datatype.IsNumeric;
+import org.infinity.datatype.IsReference;
 import org.infinity.datatype.ResourceRef;
 import org.infinity.datatype.SectionCount;
 import org.infinity.datatype.SectionOffset;
@@ -39,15 +43,26 @@ import org.infinity.resource.StructEntry;
 import org.infinity.resource.are.viewer.AreaViewer;
 import org.infinity.resource.key.ResourceEntry;
 import org.infinity.resource.vertex.Vertex;
+import org.infinity.resource.wmp.AreaEntry;
+import org.infinity.resource.wmp.WmpResource;
 import org.infinity.search.SearchOptions;
-import org.infinity.util.IdsMap;
 import org.infinity.util.IdsMapCache;
-import org.infinity.util.IdsMapEntry;
+import org.infinity.util.LuaEntry;
+import org.infinity.util.LuaParser;
 import org.infinity.util.StringTable;
 import org.infinity.util.Table2da;
 import org.infinity.util.Table2daCache;
 import org.infinity.util.io.StreamUtils;
 
+/**
+ * The ARE resource describes the content of an area (rather than its visual representation).
+ * ARE files contain the list of {@link Actor actors}, {@link Item items}, {@link Entrance
+ * entrances and exits}, {@link SpawnPoint spawn points} and other area-associated info.
+ * <p>
+ * The ARE resource may contain references to other files, e.g. the list of items in a
+ * {@link Container container} is stored in the ARE file, however the files themselves are
+ * not embedded in the ARE file.
+ */
 public final class AreResource extends AbstractStruct implements Resource, HasAddRemovable, HasViewerTabs
 {
   // ARE-specific field labels
@@ -71,6 +86,7 @@ public final class AreResource extends AbstractStruct implements Resource, HasAd
   public static final String ARE_OVERLAY_TRANSPARENCY     = "Overlay transparency";
   public static final String ARE_AREA_DIFFICULTY_2        = "Area difficulty 2";
   public static final String ARE_AREA_DIFFICULTY_3        = "Area difficulty 3";
+  public static final String ARE_AREA_CUR_DIFFICULTY      = "Current area difficulty";  // confirm!
   public static final String ARE_OFFSET_ACTORS            = "Actors offset";
   public static final String ARE_OFFSET_TRIGGERS          = "Triggers offset";
   public static final String ARE_OFFSET_SPAWN_POINTS      = "Spawn points offset";
@@ -110,48 +126,176 @@ public final class AreResource extends AbstractStruct implements Resource, HasAd
   public static final String ARE_REST_MOVIE_NIGHT         = "Rest movie (night)";
   public static final String ARE_EXPLORED_BITMAP          = "Explored bitmap";
 
-  public static final String[] s_flag = {"No flags set", "Outdoor", "Day/Night",
+  public static final String[] s_flag = {"Indoors", "Outdoors", "Day/Night",
                                          "Weather", "City", "Forest", "Dungeon",
-                                         "Extended night", "Can rest"};
+                                         "Extended night", "Can rest indoors"};
   public static final String[] s_flag_torment = {"Indoors", "Hive", "Hive Night", "Clerk's ward",
                                                  "Lower ward", "Ravel's maze", "Baator", "Rubikon",
                                                  "Negative material plane", "Curst", "Carceri",
                                                  "Allow day/night"};
-  public static final String[] s_atype = {"Normal", "Can't save game", "Tutorial area", "Dead magic zone",
+  public static final String[] s_atype = {"Normal", "Save not allowed", "Tutorial area", "Dead magic zone",
                                           "Dream area"};
-  public static final String[] s_atype_ee = {"Normal", "Can't save game", "Tutorial area", "Dead magic zone",
+  public static final String[] s_atype_ee = {"Normal", "Save not allowed", "Tutorial area", "Dead magic zone",
                                              "Dream area", "Player1 can die;Allows death of party leader without ending the game",
-                                             "Can't rest", "Can't travel"};
-  public static final String[] s_atype_torment = {"Normal", "Can't save game",
-                                                  "Can't rest;Combined with bit 2: \"Can't rest without permission\"",
-                                                  "Too dangerous to rest;Combined with bit 1: \"Can't rest without permission\""};
-  public static final String[] s_atype_pstee = {"Normal", "Can't save game", "", "Dead magic zone",
+                                             "Rest not allowed", "Travel not allowed"};
+  public static final String[] s_atype_torment = {"Normal", "Save not allowed",
+                                                  "\"You cannot rest here.\";Combined with bit 2: \"You must obtain permission to rest here.\"",
+                                                  "\"Too dangerous to rest.\";Combined with bit 1: \"You must obtain permission to rest here.\""};
+  public static final String[] s_atype_pstee = {"Normal", "Save not allowed", null, "Dead magic zone",
                                                 "Dream area", "Player1 can die;The Nameless One can die without ending the game",
-                                                "Can't rest", "Can't travel",
-                                                "Can't rest;Combined with bit 8: \"Can't rest without permission\"",
-                                                "Too dangerous to rest;Combined with bit 7: \"Can't rest without permission\""};
+                                                "Rest not allowed", "Travel not allowed",
+                                                "\"You cannot rest here.\";Combined with bit 8: \"You must obtain permission to rest here.\"",
+                                                "\"Too dangerous to rest.\";Combined with bit 7: \"You must obtain permission to rest here.\""};
   public static final String[] s_atype_iwd2 = {"Normal", "Can't save game", "Cannot rest", "Lock battle music"};
   public static final String[] s_edge = {"No flags set", "Party required", "Party enabled"};
+
+  private static HashMap<String, String> mapNames = null; // Map ARE resref -> description
 
   private StructHexViewer hexViewer;
   private AreaViewer areaViewer;
 
+  /**
+   * Returns localized name of the area. If such resource does not exists, or not contains mapping
+   * for the specified area, returns {@code null}.
+   *
+   * @param entry Pointer to ARE resource. If {@code null}, method returns {@code null}
+   * @return String with localized name of the area from male talk table
+   */
   public static String getSearchString(ResourceEntry entry)
   {
     String retVal = null;
-    if (entry != null && ResourceFactory.resourceExists("MAPNAME.2DA")) {
-      Table2da table = Table2daCache.get("MAPNAME.2DA");
-      if (table != null) {
-        String are = entry.getResourceName();
-        are = are.substring(0, are.lastIndexOf('.'));
-        for (int row = 0, cnt = table.getRowCount(); row < cnt; row++) {
-          if (are.equalsIgnoreCase(table.get(row, 0))) {
-            try {
-              int strref = Integer.parseInt(table.get(row, 1));
-              retVal = StringTable.getStringRef(strref);
-            } catch (NumberFormatException e) {
+    if (entry != null)
+      retVal = getMapName(entry.getResourceName());
+    return retVal;
+  }
+
+  // Returns descriptive name of specified ARE resref if available, null otherwise.
+  private static String getMapName(String resref) {
+    String retVal = null;
+    initMapNames(false);
+    if (mapNames == null)
+      return retVal;
+
+    if (resref != null) {
+      if (resref.lastIndexOf('.') > 0)
+        resref = resref.substring(0, resref.lastIndexOf('.'));
+      resref = resref.toUpperCase();
+      retVal = mapNames.getOrDefault(resref, null);
+    }
+    return retVal;
+  }
+
+  // Initializes search names for ARE resources if available
+  private static void initMapNames(boolean force) {
+    if (mapNames == null || force) {
+      mapNames = null;
+      if (Profile.isEnhancedEdition() && ResourceFactory.resourceExists("BGEE.LUA")) {
+        // Enhanced Edition 2.0+ map names
+        try {
+          // getting all cheatAreas* tables from BGEE.LUA and the various L_xx_YY.LUA files
+          List<ResourceEntry> luaFiles = ResourceFactory.getResources(Pattern.compile("L_.*\\.LUA"));
+          luaFiles.add(ResourceFactory.getResourceEntry("BGEE.LUA"));
+          LuaEntry entries = LuaParser.Parse(luaFiles, "cheatAreas\\w*", false);
+          mapNames = createMapNamesFromLua(entries);
+        } catch (Exception e) {
+          e.printStackTrace();
+        }
+      } else if (ResourceFactory.resourceExists("MAPNAME.2DA")) {
+        // PST map names
+        mapNames = createMapNamesFromTable();
+      } else {
+        // try getting map names from worldmaps
+        mapNames = createMapNamesFromWorldmap();
+      }
+    }
+  }
+
+  // Decodes area code -> area name entries from specified LuaEntry structure
+  private static HashMap<String, String> createMapNamesFromLua(LuaEntry root)
+  {
+    if (root == null || root.children.isEmpty())
+      return null;
+
+    HashMap<String, String> retVal = new HashMap<>();
+    for (LuaEntry table : root.children) {
+      for (LuaEntry area : table.children) {
+        if (area.children != null && area.children.size() >= 2) {
+          Object areaCode = area.children.get(0).value;
+          Object areaName = area.children.get(1).value;
+
+          // PSTEE-specific: area name is provided as strref
+          if (areaName instanceof Integer)
+            areaName = StringTable.getStringRef((Integer)areaName);
+
+          if (areaCode != null && areaName != null && !areaName.toString().isEmpty())
+            retVal.put(areaCode.toString().toUpperCase(), areaName.toString());
+        }
+      }
+    }
+    return retVal;
+  }
+
+  // Initializes PST map names
+  private static HashMap<String, String> createMapNamesFromTable()
+  {
+    HashMap<String, String> retVal = null;
+
+    Table2da table = Table2daCache.get("MAPNAME.2DA");
+    if (table != null) {
+      retVal = new HashMap<>(table.getRowCount());
+      for (int row = 0, cnt = table.getRowCount(); row < cnt; row++) {
+        String resref = table.get(row, 0);
+        String desc = null;
+        try {
+          int strref = Integer.parseInt(table.get(row, 1));
+          desc = StringTable.getStringRef(strref);
+        } catch (NumberFormatException e) {
+        }
+        if (resref != table.getDefaultValue() && desc != null) {
+          retVal.put(resref.toUpperCase(), desc);
+        }
+      }
+    }
+    return retVal;
+  }
+
+  // Collect area names from worldmaps
+  private static HashMap<String, String> createMapNamesFromWorldmap()
+  {
+    HashMap<String, String> retVal = new HashMap<>();
+    List<ResourceEntry> wmpList = ResourceFactory.getResources("WMP", Collections.emptyList());
+    if (wmpList != null) {
+      for (ResourceEntry wmpEntry : wmpList) {
+        try {
+          WmpResource wmp = (WmpResource)ResourceFactory.getResource(wmpEntry);
+          if (wmp != null) {
+            List<StructEntry> mapList = wmp.getFields(org.infinity.resource.wmp.MapEntry.class);
+            for (StructEntry mapEntry : mapList) {
+              List<StructEntry> areaList = ((AbstractStruct)mapEntry).getFields(AreaEntry.class);
+              for (StructEntry areaEntry : areaList) {
+                AreaEntry area = (AreaEntry)areaEntry;
+
+                String resref = ((IsReference)area.getAttribute(AreaEntry.WMP_AREA_CURRENT)).getResourceName();
+                if (resref == null || resref.isEmpty())
+                  continue;
+                int pos = resref.lastIndexOf('.');
+                if (pos > 0)
+                  resref = resref.substring(0, pos);
+                resref = resref.toUpperCase();
+
+                int strref = ((IsNumeric)area.getAttribute(AreaEntry.WMP_AREA_TOOLTIP)).getValue();
+                if (!StringTable.isValidStringRef(strref))
+                  strref = ((IsNumeric)area.getAttribute(AreaEntry.WMP_AREA_NAME)).getValue();
+                if (StringTable.isValidStringRef(strref)) {
+                  String name = StringTable.getStringRef(strref);
+                  if (name != null && !name.isEmpty())
+                    retVal.put(resref, name);
+                }
+              }
             }
           }
+        } catch (Exception e) {
+          // no need to report anything
         }
       }
     }
@@ -345,7 +489,7 @@ public final class AreResource extends AbstractStruct implements Resource, HasAd
   @Override
   public void write(OutputStream os) throws IOException
   {
-    super.writeFlatList(os);
+    super.writeFlatFields(os);
   }
 
 // --------------------- End Interface Writeable ---------------------
@@ -459,15 +603,20 @@ public final class AreResource extends AbstractStruct implements Resource, HasAd
     addField(new ResourceRef(buffer, offset + 8, ARE_WED_RESOURCE, "WED"));
     addField(new DecNumber(buffer, offset + 16, 4, ARE_LAST_SAVED));
     if (version.toString().equalsIgnoreCase("V9.1")) {
-      addField(new Flag(buffer, offset + 20, 4, ARE_AREA_TYPE, getUpdatedIdsFlags(s_atype_iwd2, "AREAFLAG.IDS", 4, false)));
+      addField(new Flag(buffer, offset + 20, 4, ARE_AREA_TYPE,
+                        IdsMapCache.getUpdatedIdsFlags(s_atype_iwd2, "AREAFLAG.IDS", 4, false, false)));
     } else if (Profile.getEngine() == Profile.Engine.PST) {
-      addField(new Flag(buffer, offset + 20, 4, ARE_AREA_TYPE, getUpdatedIdsFlags(s_atype_torment, null, 4, false)));
+      addField(new Flag(buffer, offset + 20, 4, ARE_AREA_TYPE,
+                        IdsMapCache.getUpdatedIdsFlags(s_atype_torment, null, 4, false, false)));
     } else if (Profile.getGame() == Profile.Game.PSTEE) {
-      addField(new Flag(buffer, offset + 20, 4, ARE_AREA_TYPE, getUpdatedIdsFlags(s_atype_pstee, null, 4, false)));
+      addField(new Flag(buffer, offset + 20, 4, ARE_AREA_TYPE,
+                        IdsMapCache.getUpdatedIdsFlags(s_atype_pstee, null, 4, false, false)));
     } else if (Profile.isEnhancedEdition()) {
-      addField(new Flag(buffer, offset + 20, 4, ARE_AREA_TYPE, getUpdatedIdsFlags(s_atype_ee, "AREAFLAG.IDS", 4, false)));
+      addField(new Flag(buffer, offset + 20, 4, ARE_AREA_TYPE,
+                        IdsMapCache.getUpdatedIdsFlags(s_atype_ee, "AREAFLAG.IDS", 4, false, false)));
     } else {
-      addField(new Flag(buffer, offset + 20, 4, ARE_AREA_TYPE, getUpdatedIdsFlags(s_atype, "AREAFLAG.IDS", 4, false)));
+      addField(new Flag(buffer, offset + 20, 4, ARE_AREA_TYPE,
+                        IdsMapCache.getUpdatedIdsFlags(s_atype, "AREAFLAG.IDS", 4, false, false)));
     }
     addField(new ResourceRef(buffer, offset + 24, ARE_AREA_NORTH, "ARE"));
     addField(new Flag(buffer, offset + 32, 4, ARE_EDGE_FLAGS_NORTH, s_edge));
@@ -478,9 +627,11 @@ public final class AreResource extends AbstractStruct implements Resource, HasAd
     addField(new ResourceRef(buffer, offset + 60, ARE_AREA_WEST, "ARE"));
     addField(new Flag(buffer, offset + 68, 4, ARE_EDGE_FLAGS_WEST, s_edge));
     if (Profile.getEngine() == Profile.Engine.PST || Profile.getGame() == Profile.Game.PSTEE) {
-      addField(new Flag(buffer, offset + 72, 2, ARE_LOCATION, getUpdatedIdsFlags(s_flag_torment, null, 2, false)));
+      addField(new Flag(buffer, offset + 72, 2, ARE_LOCATION,
+                        IdsMapCache.getUpdatedIdsFlags(s_flag_torment, null, 2, false, false)));
     } else {
-      addField(new Flag(buffer, offset + 72, 2, ARE_LOCATION, getUpdatedIdsFlags(s_flag, "AREATYPE.IDS", 2, false)));
+      addField(new Flag(buffer, offset + 72, 2, ARE_LOCATION,
+                        IdsMapCache.getUpdatedIdsFlags(s_flag, "AREATYPE.IDS", 2, false, false)));
     }
     addField(new DecNumber(buffer, offset + 74, 2, ARE_PROBABILITY_RAIN));
     addField(new DecNumber(buffer, offset + 76, 2, ARE_PROBABILITY_SNOW));
@@ -495,7 +646,8 @@ public final class AreResource extends AbstractStruct implements Resource, HasAd
     if (version.toString().equalsIgnoreCase("V9.1")) {
       addField(new DecNumber(buffer, offset + 84, 1, ARE_AREA_DIFFICULTY_2));
       addField(new DecNumber(buffer, offset + 85, 1, ARE_AREA_DIFFICULTY_3));
-      addField(new Unknown(buffer, offset + 86, 14));
+      addField(new DecNumber(buffer, offset + 86, 2, ARE_AREA_CUR_DIFFICULTY));
+      addField(new Unknown(buffer, offset + 88, 12));
       offset += 16;
     }
     SectionOffset offset_actors = new SectionOffset(buffer, offset + 84, ARE_OFFSET_ACTORS,
@@ -553,10 +705,10 @@ public final class AreResource extends AbstractStruct implements Resource, HasAd
     addField(new HexNumber(buffer, offset + 144, 4, ARE_OFFSET_OBJECT_FLAGS));
     addField(new ResourceRef(buffer, offset + 148, ARE_AREA_SCRIPT, "BCS"));
     SectionCount size_exploredbitmap = new SectionCount(buffer, offset + 156, 4, ARE_SIZE_EXPLORED_BITMAP,
-                                                        Unknown.class);
+                                                        Explored.class);
     addField(size_exploredbitmap);
     SectionOffset offset_exploredbitmap = new SectionOffset(buffer, offset + 160, ARE_OFFSET_EXPLORED_BITMAP,
-                                                            Unknown.class);
+                                                            Explored.class);
     addField(offset_exploredbitmap);
     SectionCount count_doors = new SectionCount(buffer, offset + 164, 4, ARE_NUM_DOORS,
                                                 Door.class);
@@ -677,7 +829,7 @@ public final class AreResource extends AbstractStruct implements Resource, HasAd
 
     offset = offset_exploredbitmap.getValue();
     if (size_exploredbitmap.getValue() > 0) {
-      addField(new Unknown(buffer, offset, size_exploredbitmap.getValue(), ARE_EXPLORED_BITMAP));
+      addField(new Explored(buffer, offset, size_exploredbitmap.getValue(), ARE_EXPLORED_BITMAP));
     }
 
     offset = offset_doors.getValue();
@@ -729,33 +881,29 @@ public final class AreResource extends AbstractStruct implements Resource, HasAd
     }
 
     offset = offset_items.getValue();
-    for (int i = 0; i < getFieldCount(); i++) {
-      Object o = getField(i);
+    for (final StructEntry o : getFields()) {
       if (o instanceof Container)
         ((Container)o).readItems(buffer, offset);
     }
 
     offset = offset_vertices.getValue();
-    for (int i = 0; i < getFieldCount(); i++) {
-      Object o = getField(i);
+    for (final StructEntry o : getFields()) {
       if (o instanceof HasVertices)
         ((HasVertices)o).readVertices(buffer, offset);
     }
 
-    if (offset_songs.getValue() > 0) {
+    if (offset_songs.getValue() > 0 && offset_songs.getValue() < buffer.limit()) {
       addField(new Song(this, buffer, offset_songs.getValue()));
     }
-    if (offset_rest.getValue() > 0) {
+    if (offset_rest.getValue() > 0 && offset_rest.getValue() < buffer.limit()) {
       addField(new RestSpawn(this, buffer, offset_rest.getValue()));
     }
 
     int endoffset = offset;
-    for (int i = 0; i < getFieldCount(); i++) {
-      StructEntry entry = getField(i);
+    for (final StructEntry entry : getFields()) {
       if (entry instanceof HasVertices) {
         // may contain additional elements
-        for (int j = 0, count = ((AbstractStruct)entry).getFieldCount(); j < count; j++) {
-          StructEntry subEntry = ((AbstractStruct)entry).getField(j);
+        for (final StructEntry subEntry : ((AbstractStruct)entry).getFields()) {
           endoffset = Math.max(endoffset, subEntry.getOffset() + subEntry.getSize());
         }
       } else {
@@ -769,8 +917,7 @@ public final class AreResource extends AbstractStruct implements Resource, HasAd
 
   private void updateActorCREOffsets()
   {
-    for (int i = 0; i < getFieldCount(); i++) {
-      Object o = getField(i);
+    for (final StructEntry o : getFields()) {
       if (o instanceof Actor) {
         ((Actor)o).updateCREOffset();
       }
@@ -782,8 +929,7 @@ public final class AreResource extends AbstractStruct implements Resource, HasAd
     // Assumes items offset is correct
     int offset = ((HexNumber)getAttribute(ARE_OFFSET_ITEMS)).getValue();
     int count = 0;
-    for (int i = 0; i < getFieldCount(); i++) {
-      Object o = getField(i);
+    for (final StructEntry o : getFields()) {
       if (o instanceof Container) {
         Container container = (Container)o;
         int itemNum = container.updateItems(offset, count);
@@ -799,8 +945,7 @@ public final class AreResource extends AbstractStruct implements Resource, HasAd
     // Assumes vertices offset is correct
     int offset = ((HexNumber)getAttribute(ARE_OFFSET_VERTICES)).getValue();
     int count = 0;
-    for (int i = 0; i < getFieldCount(); i++) {
-      Object o = getField(i);
+    for (final StructEntry o : getFields()) {
       if (o instanceof HasVertices) {
         HasVertices vert = (HasVertices)o;
         int vertNum = vert.updateVertices(offset, count);
@@ -809,63 +954,6 @@ public final class AreResource extends AbstractStruct implements Resource, HasAd
       }
     }
     ((DecNumber)getAttribute(ARE_NUM_VERTICES)).setValue(count);
-  }
-
-  /**
-   * Returns a String array for Flag datatypes, that has been updated or overwritten with entries
-   * from the specified IDS resource.
-   * @param flags A static String array used as basis for Flag labels.
-   * @param idsFile IDS resource to take entries from.
-   * @param size Size of flags field in bytes. (Range: 1..4)
-   * @param overwrite If {@code true}, then static flag label will be overwritten with entries
-   *                  from the IDS resource.
-   *                  If {@code false}, then entries from IDS resource will be used only for
-   *                  missing or empty entries in the {@code flags} array.
-   * @return
-   */
-  public static String[] getUpdatedIdsFlags(String[] flags, String idsFile, int size, boolean overwrite)
-  {
-    ArrayList<String> list = new ArrayList<String>(32);
-    size = Math.max(1, Math.min(4, size));
-
-    // adding static labels
-    if (flags != null && flags.length > 1) {
-      Collections.addAll(list, flags);
-    } else {
-      list.add(null); // empty flags label
-    }
-
-    // updating list with labels from IDS entries
-    if (ResourceFactory.resourceExists(idsFile)) {
-      IdsMap map = IdsMapCache.get(idsFile);
-      if (map != null) {
-        int numBits = size * 8;
-        for (int i = 0; i < numBits; i++) {
-          IdsMapEntry entry = map.get((long)(1 << i));
-          String s = (entry != null) ? entry.getSymbol() : null;
-          if (i < list.size() - 1) {
-            if (overwrite || list.get(i+1) == null) {
-              list.set(i+1, s);
-            }
-          } else {
-            list.add(s);
-          }
-        }
-      }
-    }
-
-    // cleaning up trailing null labels
-    while (list.size() > 1 && list.get(list.size() - 1) == null) {
-      list.remove(list.size() - 1);
-    }
-
-    // converting list into array
-    String[] retVal = new String[list.size()];
-    for (int i = 0; i < retVal.length; i++) {
-      retVal[i] = list.get(i);
-    }
-
-    return retVal;
   }
 
   /** Displays the area viewer for this ARE resource. */
@@ -1033,4 +1121,3 @@ public final class AreResource extends AbstractStruct implements Resource, HasAd
     return false;
   }
 }
-

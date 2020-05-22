@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2018 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.key;
@@ -29,6 +29,7 @@ import org.infinity.resource.other.VvcResource;
 import org.infinity.resource.pro.ProResource;
 import org.infinity.resource.spl.SplResource;
 import org.infinity.resource.sto.StoResource;
+import org.infinity.resource.text.PlainTextResource;
 import org.infinity.search.SearchOptions;
 import org.infinity.util.io.StreamUtils;
 
@@ -175,29 +176,36 @@ public abstract class ResourceEntry implements Comparable<ResourceEntry>
                            BrowserMenuBar.getInstance().ignoreOverrides());
   }
 
+  /**
+   * Returns localized name of the resource. This string used in game interface.
+   */
   public String getSearchString()
   {
     if (searchString == null) {
       try {
-        String extension = getExtension();
-        if (extension.equalsIgnoreCase("CRE")) {
+        String extension = getExtension().toUpperCase();
+        if (extension.equals("CRE") || extension.equals("CHR")) {
           try (InputStream is = getResourceDataAsStream()) {
             searchString = CreResource.getSearchString(is);
           }
-        } else if (extension.equalsIgnoreCase("ITM")) {
+        } else if (extension.equals("ITM")) {
           try (InputStream is = getResourceDataAsStream()) {
             searchString = ItmResource.getSearchString(is);
           }
-        } else if (extension.equalsIgnoreCase("SPL")) {
+        } else if (extension.equals("SPL")) {
           try (InputStream is = getResourceDataAsStream()) {
             searchString = SplResource.getSearchString(is);
           }
-        } else if (extension.equalsIgnoreCase("STO")) {
+        } else if (extension.equals("STO")) {
           try (InputStream is = getResourceDataAsStream()) {
             searchString = StoResource.getSearchString(is);
           }
-        } else if (extension.equalsIgnoreCase("ARE") && Profile.isEnhancedEdition()) {
+        } else if (extension.equals("ARE")) {
           searchString = AreResource.getSearchString(this);
+        } else if (extension.equals("PRO")) {
+          searchString = ProResource.getSearchString(this);
+        } else if (extension.equals("INI")) {
+          searchString = PlainTextResource.getSearchString(this);
         }
       } catch (Exception e) {
         if ((NearInfinity.getInstance() != null) &&
@@ -251,7 +259,7 @@ public abstract class ResourceEntry implements Comparable<ResourceEntry>
     // 1. Options->Show Unknown Resource Types == true OR resource type is supported
     // 2. NOT Resource type part of skippedExtensions
     // 3. Filename length is valid
-    int resLen = getResourceName().lastIndexOf('.');
+    int resLen = getResourceRef().length();
     boolean bRet = (BrowserMenuBar.getInstance() != null && BrowserMenuBar.getInstance().showUnknownResourceTypes()) ||
                    Profile.isResourceTypeSupported(getExtension()) &&
                    !skippedExtensions.contains(getExtension().toUpperCase(Locale.ENGLISH)) &&
@@ -263,6 +271,7 @@ public abstract class ResourceEntry implements Comparable<ResourceEntry>
 
   public abstract long getResourceSize(boolean ignoreOverride);
 
+  /** Returns the type of the resource (extension without leading dot). */
   public abstract String getExtension();
 
   public abstract ByteBuffer getResourceBuffer(boolean ignoreOverride) throws Exception;
@@ -271,8 +280,13 @@ public abstract class ResourceEntry implements Comparable<ResourceEntry>
 
   public abstract int[] getResourceInfo(boolean ignoreOverride) throws Exception;
 
+  /** Returns the full resource name (name dot extension) */
   public abstract String getResourceName();
 
+  /** Returns the resource name without extension. */
+  public abstract String getResourceRef();
+
+  /** Returns name of folder in the resource tree in which this entry appears. */
   public abstract String getTreeFolderName();
 
   public abstract ResourceTreeFolder getTreeFolder();

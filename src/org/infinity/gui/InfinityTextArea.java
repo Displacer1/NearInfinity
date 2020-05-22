@@ -5,6 +5,7 @@
 package org.infinity.gui;
 
 import java.awt.Color;
+import java.awt.Font;
 import java.awt.Point;
 import java.awt.Rectangle;
 import java.io.IOException;
@@ -37,6 +38,8 @@ import org.infinity.resource.text.modes.BCSFoldParser;
 import org.infinity.resource.text.modes.BCSTokenMaker;
 import org.infinity.resource.text.modes.GLSLTokenMaker;
 import org.infinity.resource.text.modes.TLKTokenMaker;
+import org.infinity.resource.text.modes.WeiDULogTokenMaker;
+import org.infinity.util.Misc;
 
 /**
  * Extends {@link RSyntaxTextArea} by NearInfinity-specific features.
@@ -57,6 +60,8 @@ public class InfinityTextArea extends RSyntaxTextArea implements ChangeListener
     LUA,
     /** Select SQL highlighting. */
     SQL,
+    /** Select WeiDU.log highlighting. */
+    WEIDU,
   }
 
   /** Available color schemes for use when enabling syntax highlighting. */
@@ -112,6 +117,8 @@ public class InfinityTextArea extends RSyntaxTextArea implements ChangeListener
     ((AbstractTokenMakerFactory)TokenMakerFactory.getDefaultInstance())
       .putMapping(TLKTokenMaker.SYNTAX_STYLE_TLK, "org.infinity.resource.text.modes.TLKTokenMaker");
     ((AbstractTokenMakerFactory)TokenMakerFactory.getDefaultInstance())
+      .putMapping(WeiDULogTokenMaker.SYNTAX_STYLE_WEIDU, "org.infinity.resource.text.modes.WeiDULogTokenMaker");
+    ((AbstractTokenMakerFactory)TokenMakerFactory.getDefaultInstance())
       .putMapping(GLSLTokenMaker.SYNTAX_STYLE_GLSL, "org.infinity.resource.text.modes.GLSLTokenMaker");
 
     // initializing color schemes
@@ -141,6 +148,7 @@ public class InfinityTextArea extends RSyntaxTextArea implements ChangeListener
       applySettings(true);
       applyExtendedSettings(null, null);
     }
+    setFont(getGlobalFont());
   }
 
   /**
@@ -155,6 +163,7 @@ public class InfinityTextArea extends RSyntaxTextArea implements ChangeListener
       applySettings(true);
       applyExtendedSettings(null, null);
     }
+    setFont(getGlobalFont());
   }
 
   /**
@@ -169,6 +178,7 @@ public class InfinityTextArea extends RSyntaxTextArea implements ChangeListener
       applySettings(true);
       applyExtendedSettings(null, null);
     }
+    setFont(getGlobalFont());
   }
 
   /**
@@ -183,6 +193,7 @@ public class InfinityTextArea extends RSyntaxTextArea implements ChangeListener
       applySettings(true);
       applyExtendedSettings(null, null);
     }
+    setFont(getGlobalFont());
   }
 
   /**
@@ -199,6 +210,7 @@ public class InfinityTextArea extends RSyntaxTextArea implements ChangeListener
       applySettings(true);
       applyExtendedSettings(null, null);
     }
+    setFont(getGlobalFont());
   }
 
   /**
@@ -216,6 +228,7 @@ public class InfinityTextArea extends RSyntaxTextArea implements ChangeListener
       applySettings(true);
       applyExtendedSettings(null, null);
     }
+    setFont(getGlobalFont());
   }
 
   /**
@@ -234,6 +247,7 @@ public class InfinityTextArea extends RSyntaxTextArea implements ChangeListener
       applySettings(true);
       applyExtendedSettings(null, null);
     }
+    setFont(getGlobalFont());
   }
 
   /**
@@ -297,6 +311,9 @@ public class InfinityTextArea extends RSyntaxTextArea implements ChangeListener
         case SQL:
           style = SyntaxConstants.SYNTAX_STYLE_SQL;
           break;
+        case WEIDU:
+          style = WeiDULogTokenMaker.SYNTAX_STYLE_WEIDU;
+          break;
         default:
           style = SyntaxConstants.SYNTAX_STYLE_NONE;
       }
@@ -338,6 +355,11 @@ public class InfinityTextArea extends RSyntaxTextArea implements ChangeListener
           case SQL:
             if (BrowserMenuBar.getInstance() != null) {
               schemePath = BrowserMenuBar.getInstance().getSqlColorScheme();
+            }
+            break;
+          case WEIDU:
+            if (BrowserMenuBar.getInstance() != null) {
+              schemePath = BrowserMenuBar.getInstance().getWeiDUColorScheme();
             }
             break;
           default:
@@ -601,6 +623,14 @@ public class InfinityTextArea extends RSyntaxTextArea implements ChangeListener
         }
       }
     }
+  }
+
+  // Returns scaled global font
+  private Font getGlobalFont() {
+    Font f = (BrowserMenuBar.getInstance() != null) ? BrowserMenuBar.getInstance().getScriptFont() : getFont();
+    if (f != null)
+      f = Misc.getScaledFont(f);
+    return f;
   }
 
 

@@ -1,10 +1,11 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2018 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.video;
 
 import java.awt.BorderLayout;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
@@ -41,9 +42,11 @@ import org.infinity.gui.WindowBlocker;
 import org.infinity.icon.Icons;
 import org.infinity.resource.Closeable;
 import org.infinity.resource.Profile;
+import org.infinity.resource.Referenceable;
 import org.infinity.resource.Resource;
 import org.infinity.resource.ResourceFactory;
 import org.infinity.resource.ViewableContainer;
+import org.infinity.resource.key.BIFFResourceEntry;
 import org.infinity.resource.key.ResourceEntry;
 import org.infinity.search.ReferenceSearcher;
 import org.monte.media.AudioFormatKeys;
@@ -53,7 +56,14 @@ import org.monte.media.VideoFormatKeys;
 import org.monte.media.avi.AVIWriter;
 import org.monte.media.math.Rational;
 
-public class MveResource implements Resource, ActionListener, ItemListener, Closeable, Runnable
+/**
+ * This resource describes the movies played during the game. Movies can only be
+ * played by the engine when they are stored in a {@link BIFFResourceEntry BIFF} file.
+ *
+ * @see <a href="https://gibberlings3.github.io/iesdp/file_formats/ie_formats/mve.htm">
+ * https://gibberlings3.github.io/iesdp/file_formats/ie_formats/mve.htm</a>
+ */
+public class MveResource implements Resource, ActionListener, ItemListener, Closeable, Referenceable, Runnable
 {
   private static final int VIDEO_BUFFERS = 3;
 
@@ -99,7 +109,7 @@ public class MveResource implements Resource, ActionListener, ItemListener, Clos
   public void actionPerformed(ActionEvent event)
   {
     if (event.getSource() == buttonPanel.getControlByType(ButtonPanel.Control.FIND_REFERENCES)) {
-      new ReferenceSearcher(entry, panel.getTopLevelAncestor());
+      searchReferences(panel.getTopLevelAncestor());
     } else if (miExport == event.getSource()) {
       ResourceFactory.exportResource(entry, panel.getTopLevelAncestor());
     } else if (miExportAvi == event.getSource()) {
@@ -184,6 +194,22 @@ public class MveResource implements Resource, ActionListener, ItemListener, Clos
   }
 
 //--------------------- End Interface Closeable ---------------------
+
+//--------------------- Begin Interface Referenceable ---------------------
+
+  @Override
+  public boolean isReferenceable()
+  {
+    return true;
+  }
+
+  @Override
+  public void searchReferences(Component parent)
+  {
+    new ReferenceSearcher(entry, parent);
+  }
+
+//--------------------- End Interface Referenceable ---------------------
 
 //--------------------- Begin Interface Runnable ---------------------
 
@@ -296,12 +322,7 @@ public class MveResource implements Resource, ActionListener, ItemListener, Clos
     if (inEntry != null) {
       JFileChooser fc = new JFileChooser(Profile.getGameRoot().toFile());
       fc.setDialogTitle("Export MVE as AVI");
-      String name = inEntry.getResourceName();
-      if (name.lastIndexOf('.') > 0) {
-        name = name.substring(0, name.lastIndexOf('.')) + ".avi";
-      } else {
-        name = name + ".avi";
-      }
+      String name = inEntry.getResourceRef() + ".avi";
       fc.setSelectedFile(new File(fc.getCurrentDirectory(), name));
       fc.setDialogType(JFileChooser.SAVE_DIALOG);
       fc.setFileSelectionMode(JFileChooser.FILES_ONLY);
@@ -432,7 +453,7 @@ public class MveResource implements Resource, ActionListener, ItemListener, Clos
         // writing regular frame data
         do {
           if (!silent && frameIdx % 10 == 0) {
-            pm.setNote(String.format("Processing frame %1$d", frameIdx));
+            pm.setNote(String.format("Processing frame %d", frameIdx));
           }
 
           if (decoder.frameHasVideo()) {
@@ -500,7 +521,7 @@ public class MveResource implements Resource, ActionListener, ItemListener, Clos
     return false;
   }
 
-  // Reduces color range from [0, 255] to [16, 235] to conform to CCIR-601 standard.
+  /** Reduces color range from [0, 255] to [16, 235] to conform to CCIR-601 standard. */
   private static void adjustColorSpace(BufferedImage image)
   {
     if (image != null) {

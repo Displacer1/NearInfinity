@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.updater;
@@ -40,6 +40,7 @@ import javax.swing.text.Document;
 
 import org.infinity.gui.ViewerUtil;
 import org.infinity.gui.WindowBlocker;
+import org.infinity.util.Misc;
 
 /**
  * Provides a dialog for configuring update-relevant data.
@@ -115,7 +116,7 @@ public class UpdaterSettings extends JDialog
     JPanel pServer = new JPanel(new GridBagLayout());
     pServer.setBorder(BorderFactory.createTitledBorder("Update servers"));
     for (int i = 0; i < server.getServerCount(); i++) {
-      JLabel label = new JLabel(String.format("Server %1$d", i+1));
+      JLabel label = new JLabel(String.format("Server %d", i+1));
 
       gbc = ViewerUtil.setGBC(gbc, 0, i, 1, 1, 0.0, 0.0, GridBagConstraints.LINE_START,
                               GridBagConstraints.HORIZONTAL, new Insets(8, 8, 0, 0), 0, 0);
@@ -271,7 +272,7 @@ public class UpdaterSettings extends JDialog
 
     // saving proxy settings
     String addr = tfProxyAddress.getText();
-    int port = Utils.toNumber(tfProxyPort.getText(), -1);
+    int port = Misc.toNumber(tfProxyPort.getText(), -1);
     Updater.getInstance().setProxyEnabled(cbProxyEnabled.isSelected());
     Updater.getInstance().setProxy(addr, port);
   }
@@ -300,7 +301,7 @@ public class UpdaterSettings extends JDialog
     for (int i = 0; i < Updater.getMaxServerCount(); i++) {
       if (!server.isValidated(i)) {
         if (!Utils.isSecureUrl(server.getServerUrl(i))) {
-          String msg = String.format("Server %1$d does not specify a secure connection (https).\n", i+1) +
+          String msg = String.format("Server %d does not specify a secure connection (https).\n", i+1) +
                        "Do you still want to use it?";
           if (JOptionPane.YES_OPTION != JOptionPane.showConfirmDialog(this, msg, "Warning",
                                                                       JOptionPane.YES_NO_OPTION,
@@ -334,7 +335,7 @@ public class UpdaterSettings extends JDialog
 
     // checking proxy settings
     if (!tfProxyAddress.getText().trim().isEmpty()) {
-      int port = Utils.toNumber(tfProxyPort.getText().trim(), -1);
+      int port = Misc.toNumber(tfProxyPort.getText().trim(), -1);
       if (port >= 0 && port < 65536) {
         tfProxyPort.setText(Integer.toString(port));
       } else {
@@ -400,7 +401,7 @@ public class UpdaterSettings extends JDialog
           msg = "Unknown error";
         }
         if (msg != null) {
-          JOptionPane.showMessageDialog(this, String.format("Server %1$d: %2$s.", index+1, msg),
+          JOptionPane.showMessageDialog(this, String.format("Server %d: %s.", index+1, msg),
                                         "Error", JOptionPane.ERROR_MESSAGE);
         }
         return false;
@@ -495,7 +496,7 @@ public class UpdaterSettings extends JDialog
         JButton b = new JButton("Check");
         b.addActionListener(getListeners());
         listCheck.add(b);
-        listValidated.add(Boolean.valueOf(false));
+        listValidated.add(false);
       }
     }
 
@@ -591,4 +592,3 @@ public class UpdaterSettings extends JDialog
 //    }
   }
 }
-

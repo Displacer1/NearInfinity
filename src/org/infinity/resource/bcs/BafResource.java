@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.bcs;
@@ -18,7 +18,6 @@ import java.io.OutputStreamWriter;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Locale;
 import java.util.Set;
@@ -54,11 +53,9 @@ import org.infinity.resource.ResourceFactory;
 import org.infinity.resource.TextResource;
 import org.infinity.resource.ViewableContainer;
 import org.infinity.resource.Writeable;
-import org.infinity.resource.key.BIFFResourceEntry;
 import org.infinity.resource.key.ResourceEntry;
 import org.infinity.search.TextResourceSearcher;
 import org.infinity.util.StaticSimpleXorDecryptor;
-import org.infinity.util.io.FileManager;
 import org.infinity.util.io.StreamUtils;
 
 public class BafResource implements TextResource, Writeable, Closeable, ItemListener, ActionListener,
@@ -127,20 +124,7 @@ public class BafResource implements TextResource, Writeable, Closeable, ItemList
   public void close() throws Exception
   {
     if (sourceChanged) {
-      Path output;
-      if (entry instanceof BIFFResourceEntry) {
-        output = FileManager.query(Profile.getRootFolders(), Profile.getOverrideFolderName(), entry.toString());
-      } else {
-        output = entry.getActualPath();
-      }
-      String options[] = {"Save changes", "Discard changes", "Cancel"};
-      int result = JOptionPane.showOptionDialog(panel, "Save changes to " + output + '?', "Resource changed",
-                                                JOptionPane.YES_NO_CANCEL_OPTION,
-                                                JOptionPane.WARNING_MESSAGE, null, options, options[0]);
-      if (result == 0)
-        ResourceFactory.saveResource(this, panel.getTopLevelAncestor());
-      else if (result != 1)
-        throw new Exception("Save aborted");
+      ResourceFactory.closeResource(this, entry, panel);
     }
   }
 
@@ -295,7 +279,6 @@ public class BafResource implements TextResource, Writeable, Closeable, ItemList
     sourceText.setCaretPosition(0);
     sourceText.setAutoIndentEnabled(BrowserMenuBar.getInstance().getBcsAutoIndentEnabled());
     sourceText.addCaretListener(container.getStatusBar());
-    sourceText.setFont(BrowserMenuBar.getInstance().getScriptFont());
     sourceText.setMargin(new Insets(3, 3, 3, 3));
     sourceText.setLineWrap(false);
     sourceText.getDocument().addDocumentListener(this);
@@ -320,7 +303,6 @@ public class BafResource implements TextResource, Writeable, Closeable, ItemList
     sourcePanel.add(bpSource, BorderLayout.SOUTH);
 
     codeText = new InfinityTextArea(true);
-    codeText.setFont(BrowserMenuBar.getInstance().getScriptFont());
     codeText.setMargin(new Insets(3, 3, 3, 3));
     codeText.setCaretPosition(0);
     codeText.setLineWrap(false);
@@ -421,7 +403,7 @@ public class BafResource implements TextResource, Writeable, Closeable, ItemList
       bpmErrors.setMenuItems(errorItems, false);
       bpmErrors.setEnabled(true);
     }
-    if (warningMap.size() == 0) {
+    if (warningMap.isEmpty()) {
       bpmWarnings.setEnabled(false);
     } else {
       JMenuItem warningItems[] = new JMenuItem[warningMap.size()];
@@ -434,6 +416,7 @@ public class BafResource implements TextResource, Writeable, Closeable, ItemList
       bpmWarnings.setEnabled(true);
     }
     Decompiler decompiler = new Decompiler(codeText.getText(), true);
+    decompiler.setGenerateComments(BrowserMenuBar.getInstance().autogenBCSComments());
     try {
       decompiler.decompile();
       Set<ResourceEntry> uses = decompiler.getResourcesUsed();
@@ -442,7 +425,7 @@ public class BafResource implements TextResource, Writeable, Closeable, ItemList
       for (final ResourceEntry usesEntry : uses) {
         if (usesEntry.getSearchString() != null) {
           usesItems[usesIndex++] =
-          new JMenuItem(usesEntry.toString() + " (" + usesEntry.getSearchString() + ')');
+          new JMenuItem(usesEntry.getResourceName() + " (" + usesEntry.getSearchString() + ')');
         } else {
           usesItems[usesIndex++] = new JMenuItem(usesEntry.toString());
         }
@@ -460,6 +443,7 @@ public class BafResource implements TextResource, Writeable, Closeable, ItemList
     JButton bCompile = (JButton)bpSource.getControlByType(CtrlCompile);
     ButtonPopupMenu bpmUses = (ButtonPopupMenu)buttonPanel.getControlByType(CtrlUses);
     Decompiler decompiler = new Decompiler(codeText.getText(), true);
+    decompiler.setGenerateComments(BrowserMenuBar.getInstance().autogenBCSComments());
     try {
       sourceText.setText(decompiler.getSource());
     } catch (Exception e) {
@@ -472,7 +456,7 @@ public class BafResource implements TextResource, Writeable, Closeable, ItemList
     for (final ResourceEntry usesEntry : uses) {
       if (usesEntry.getSearchString() != null)
         usesItems[usesIndex++] =
-        new JMenuItem(usesEntry.toString() + " (" + usesEntry.getSearchString() + ')');
+        new JMenuItem(usesEntry.getResourceName() + " (" + usesEntry.getSearchString() + ')');
       else
         usesItems[usesIndex++] = new JMenuItem(usesEntry.toString());
     }
@@ -521,7 +505,7 @@ public class BafResource implements TextResource, Writeable, Closeable, ItemList
         }
       });
     }
-    chooser.setSelectedFile(new File(StreamUtils.replaceFileExtension(entry.toString(), "BCS")));
+    chooser.setSelectedFile(new File(StreamUtils.replaceFileExtension(entry.getResourceName(), "BCS")));
     int returnval = chooser.showSaveDialog(panel.getTopLevelAncestor());
     if (returnval == JFileChooser.APPROVE_OPTION) {
       try (BufferedWriter bw =
@@ -538,4 +522,3 @@ public class BafResource implements TextResource, Writeable, Closeable, ItemList
     }
   }
 }
-

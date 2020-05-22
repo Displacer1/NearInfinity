@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2018 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity;
@@ -8,9 +8,11 @@ import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Dimension;
+import java.awt.Font;
 import java.awt.Frame;
 import java.awt.Image;
 import java.awt.Insets;
+import java.awt.KeyboardFocusManager;
 import java.awt.Toolkit;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.dnd.DnDConstants;
@@ -26,9 +28,12 @@ import java.awt.event.WindowEvent;
 import java.io.File;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutionException;
@@ -47,9 +52,11 @@ import javax.swing.JToolBar;
 import javax.swing.ProgressMonitor;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
+import javax.swing.ToolTipManager;
 import javax.swing.UIManager;
 import javax.swing.UIManager.LookAndFeelInfo;
 import javax.swing.filechooser.FileFilter;
+import javax.swing.plaf.FontUIResource;
 
 import org.infinity.datatype.ProRef;
 import org.infinity.gui.BrowserMenuBar;
@@ -62,9 +69,11 @@ import org.infinity.gui.PopupWindowListener;
 import org.infinity.gui.QuickSearch;
 import org.infinity.gui.ResourceTree;
 import org.infinity.gui.StatusBar;
+import org.infinity.gui.StructViewer;
 import org.infinity.gui.ViewFrame;
 import org.infinity.gui.WindowBlocker;
 import org.infinity.icon.Icons;
+import org.infinity.resource.AbstractStruct;
 import org.infinity.resource.Closeable;
 import org.infinity.resource.EffectFactory;
 import org.infinity.resource.Profile;
@@ -82,10 +91,12 @@ import org.infinity.updater.UpdateCheck;
 import org.infinity.updater.UpdateInfo;
 import org.infinity.updater.Updater;
 import org.infinity.updater.Utils;
+import org.infinity.util.CharsetDetector;
 import org.infinity.util.CreMapCache;
 import org.infinity.util.FileDeletionHook;
 import org.infinity.util.IdsMapCache;
 import org.infinity.util.IniMapCache;
+import org.infinity.util.Misc;
 import org.infinity.util.StringTable;
 import org.infinity.util.Table2daCache;
 import org.infinity.util.io.DlcManager;
@@ -106,7 +117,9 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
   private static final String LAST_GAMEDIR        = "LastGameDir";
   private static final String TABLE_WIDTH_ATTR    = "TableColWidthAttr";
   private static final String TABLE_WIDTH_OFS     = "TableColWidthOfs";
+  private static final String TABLE_WIDTH_SIZE    = "TableColWidthSize";
   private static final String TABLE_PANEL_HEIGHT  = "TablePanelHeight";
+  private static final String OPTION_GLOBAL_FONT_SIZE = "GlobalFontSize";
 
   private static final String STATUSBAR_TEXT_FMT = "Welcome to Near Infinity! - %s @ %s - %d files available";
 
@@ -118,13 +131,13 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
   private final StatusBar statusBar;
   private final WindowBlocker blocker = new WindowBlocker(this);
   // stores table column widths for "Attribute", "Value" and "Offset"
-  private final int[] tableColumnWidth = { -1, -1, -1 };
+  private final int[] tableColumnWidth = { -1, -1, -1, -1 };
 
   private Viewable viewable;
   private ButtonPopupWindow bpwQuickSearch;
   private int tablePanelHeight;
   private ProgressMonitor pmProgress;
-  private int progressIndex;
+  private int progressIndex, globalFontSize;
 
   private static Path findKeyfile()
   {
@@ -248,7 +261,7 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
       for (int i = 0; i < Math.min(JAVA_VERSION.length, javaVersion.length); i++) {
         if (Integer.parseInt(javaVersion[i]) < JAVA_VERSION[i]) {
           JOptionPane.showMessageDialog(null,
-                                        String.format("Version %1$d.%2$d or newer of Java is required!",
+                                        String.format("Version %d.%d or newer of Java is required!",
                                                       JAVA_VERSION[0], JAVA_VERSION[1]),
                                         "Error", JOptionPane.ERROR_MESSAGE);
           System.exit(10);
@@ -270,6 +283,9 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
     setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
     setAppIcon();
 
+    // setting more reasonable tooltip timings
+    ToolTipManager.sharedInstance().setDismissDelay(8000);
+
     // FileDeletionHook provides a way to delete files when the Java Virtual Machine shuts down
     Runtime.getRuntime().addShutdownHook(FileDeletionHook.getInstance());
 
@@ -277,10 +293,16 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
     Preferences prefs = Preferences.userNodeForPackage(getClass());
     migratePreferences("infinity", prefs, true);
 
-    new BrowserMenuBar();
-    setJMenuBar(BrowserMenuBar.getInstance());
+    // updating relative default font size globally
+    globalFontSize = Math.max(50, Math.min(400, prefs.getInt(OPTION_GLOBAL_FONT_SIZE, 100)));
+    resizeUIFont(globalFontSize);
 
-    String lastDir = null;
+    final BrowserMenuBar menu = new BrowserMenuBar();
+    // Registers menu as key event dispatcher to intercept Ctrl+Shift+D from any window
+    KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(menu);
+    setJMenuBar(menu);
+
+    final String lastDir;
     if (gameOverride != null && Files.isDirectory(gameOverride)) {
       lastDir = gameOverride.toString();
     } else {
@@ -300,7 +322,7 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
       System.exit(10);
     }
 
-    showProgress("Starting Near Infinity", 6);
+    showProgress("Starting Near Infinity" + Misc.MSG_EXPAND_LARGE, 6);
     SwingWorker<Void, Void> worker = new SwingWorker<Void, Void>() {
       @Override
       protected Void doInBackground() throws Exception
@@ -449,9 +471,15 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
     setVisible(true);
     setExtendedState(prefs.getInt(WINDOW_STATE, NORMAL));
 
+    // XXX: Workaround to trigger standard window closing callback on OSX when using command-Q
+    if (System.getProperty("os.name").startsWith("Mac OS X")) {
+      enableOSXQuitStrategy();
+    }
+
     tableColumnWidth[0] = Math.max(15, prefs.getInt(TABLE_WIDTH_ATTR, 300));
     tableColumnWidth[1] = 0;
     tableColumnWidth[2] = Math.max(15, prefs.getInt(TABLE_WIDTH_OFS, 100));
+    tableColumnWidth[3] = Math.max(15, prefs.getInt(TABLE_WIDTH_SIZE, 75));
     tablePanelHeight = Math.max(50, prefs.getInt(TABLE_PANEL_HEIGHT, 250));
 
     // enabling file drag and drop for whole window
@@ -521,6 +549,24 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
       editGameIni(this);
     } else if (event.getActionCommand().equals("Refresh")) {
       refreshGame();
+    } else if (event.getActionCommand().equals("RefreshTree")) {
+      try {
+        WindowBlocker.blockWindow(this, true);
+        tree.reloadRenderer();
+        tree.repaint();
+        tree.requestFocusInWindow();
+      } finally {
+        WindowBlocker.blockWindow(this, false);
+      }
+    } else if (event.getActionCommand().equals("RefreshView")) {
+      // repaint UI controls of current view
+      if (getViewable() instanceof AbstractStruct) {
+        StructViewer sv = ((AbstractStruct)getViewable()).getViewer();
+        if (sv != null)
+          SwingUtilities.updateComponentTreeUI(sv);
+      }
+      // repaint UI controls of child windows
+      ChildFrame.updateWindowGUIs();
     } else if (event.getActionCommand().equals("ChangeLook")) {
       try {
         LookAndFeelInfo info = BrowserMenuBar.getInstance().getLookAndFeel();
@@ -608,7 +654,6 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
       }
       viewable = newViewable;
       tree.select(resource.getResourceEntry());
-      BrowserMenuBar.getInstance().resourceShown(resource);
       statusBar.setMessage(resource.getResourceEntry().getActualPath().toString());
       containerpanel.removeAll();
       containerpanel.add(viewable.makeViewer(this), BorderLayout.CENTER);
@@ -663,7 +708,6 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
       }
     }
     viewable = null;
-    BrowserMenuBar.getInstance().resourceShown(null);
     tree.select(null);
     containerpanel.removeAll();
     containerpanel.revalidate();
@@ -717,9 +761,9 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
     String title = Profile.getProperty(Profile.Key.GET_GAME_TITLE);
     String desc = Profile.getProperty(Profile.Key.GET_GAME_DESC);
     if (desc != null && !desc.isEmpty()) {
-      setTitle(String.format("Near Infinity - %1$s (%2$s)", title, desc));
+      setTitle(String.format("Near Infinity - %s (%s)", title, desc));
     } else {
-      setTitle(String.format("Near Infinity - %1$s", title));
+      setTitle(String.format("Near Infinity - %s", title));
     }
   }
 
@@ -743,11 +787,11 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
 
   /**
    * Returns the current column width for tables of structured resources.
-   * @param index The column index (0 = Attribute, 1 = Value and, optionally, 2 = Offset)
+   * @param index The column index (0 = Attribute, 1 = Value and, optionally, 2 = Offset, 3 = Size)
    */
   public int getTableColumnWidth(int index)
   {
-    index = Math.min(Math.max(0, index), 2);
+    index = Math.min(Math.max(0, index), tableColumnWidth.length - 1);
     if (tableColumnWidth[index] < 0) {
       switch (index) {
         case 0: // "Attribute" column
@@ -759,6 +803,9 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
         case 2: // optional "Offset" column
           tableColumnWidth[index] = 100;
           break;
+        case 3: // optional "Size" column
+          tableColumnWidth[index] = 75;
+          break;
       }
     }
     return tableColumnWidth[index];
@@ -766,13 +813,13 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
 
   /**
    * Updates the current default column width for tables of structured resources.
-   * @param index     The column index (0 = Attribute, 1 = Value and, optionally, 2 = Offset)
+   * @param index     The column index (0 = Attribute, 1 = Value and, optionally, 2 = Offset, 3 = Size)
    * @param newValue  New width in pixels for the specified column
    * @return          Old column width
    */
   public int updateTableColumnWidth(int index, int newValue)
   {
-    index = Math.min(Math.max(0, index), 2);
+    index = Math.min(Math.max(0, index), tableColumnWidth.length - 1);
     int retVal = tableColumnWidth[index];
     tableColumnWidth[index] = Math.max(15, newValue);
     return retVal;
@@ -795,6 +842,14 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
     return retVal;
   }
 
+  /**
+   * Returns the currently selected global font size relative to UI defaults.
+   */
+  public int getGlobalFontSize()
+  {
+    return globalFontSize;
+  }
+
   private static boolean reloadFactory(boolean refreshOnly)
   {
     boolean retVal = false;
@@ -815,6 +870,9 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
   {
     if (ResourceFactory.getKeyfile() != null) {
       ResourceFactory.getKeyfile().closeBIFFFiles();
+    }
+    if (refreshOnly == false) {
+      CharsetDetector.clearCache();
     }
     DlcManager.close();
     FileManager.reset();
@@ -847,6 +905,21 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
     }
   }
 
+  private static void resizeUIFont(int percent)
+  {
+    Enumeration<Object> keys = UIManager.getDefaults().keys();
+    while (keys.hasMoreElements()) {
+      Object key = keys.nextElement();
+      Object value = UIManager.get(key);
+      if (value instanceof FontUIResource) {
+        FontUIResource fr = (FontUIResource)value;
+        Font f = Misc.getScaledFont(fr, percent);
+        UIManager.put(key, new FontUIResource(f));
+      }
+    }
+    consoletext.setFont(Misc.getScaledFont(consoletext.getFont()));
+  }
+
   private void storePreferences()
   {
     Preferences prefs = Preferences.userNodeForPackage(getClass());
@@ -864,7 +937,9 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
     prefs.put(LAST_GAMEDIR, Profile.getGameRoot().toString());
     prefs.putInt(TABLE_WIDTH_ATTR, getTableColumnWidth(0));
     prefs.putInt(TABLE_WIDTH_OFS, getTableColumnWidth(2));
+    prefs.putInt(TABLE_WIDTH_SIZE, getTableColumnWidth(3));
     prefs.putInt(TABLE_PANEL_HEIGHT, getTablePanelHeight());
+    prefs.putInt(OPTION_GLOBAL_FONT_SIZE, BrowserMenuBar.getInstance().getGlobalFontSize());
     BrowserMenuBar.getInstance().storePreferences();
     Updater.getInstance().saveUpdateSettings();
   }
@@ -873,7 +948,7 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
   {
     List<Image> list = new ArrayList<Image>();
     for (int i = 4; i < 8; i++) {
-      list.add(Icons.getImage(String.format("App%1$d.png", 1 << i)));
+      list.add(Icons.getImage(String.format("App%d.png", 1 << i)));
     }
     setIconImages(list);
   }
@@ -940,6 +1015,27 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
     }
   }
 
+  // Enables command-Q on OSX to trigger the window closing callback
+  @SuppressWarnings({ "unchecked", "rawtypes" })
+  private void enableOSXQuitStrategy()
+  {
+    try {
+      Class application = Class.forName("com.apple.eawt.Application");
+      Method getApplication = application.getMethod("getApplication");
+      Object instance = getApplication.invoke(application);
+      Class strategy = Class.forName("com.apple.eawt.QuitStrategy");
+      Enum closeAllWindows = Enum.valueOf(strategy, "CLOSE_ALL_WINDOWS");
+      Method method = application.getMethod("setQuitStrategy", strategy);
+      method.invoke(instance, closeAllWindows);
+    } catch (ClassNotFoundException |
+             NoSuchMethodException |
+             SecurityException |
+             IllegalAccessException |
+             IllegalArgumentException |
+             InvocationTargetException e) {
+      e.printStackTrace();
+    }
+  }
 
 // -------------------------- INNER CLASSES --------------------------
 
@@ -1044,4 +1140,3 @@ public final class NearInfinity extends JFrame implements ActionListener, Viewab
     }
   }
 }
-

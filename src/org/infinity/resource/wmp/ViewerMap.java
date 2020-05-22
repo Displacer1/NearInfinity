@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.wmp;
@@ -13,6 +13,7 @@ import java.awt.FlowLayout;
 import java.awt.Graphics2D;
 import java.awt.Image;
 import java.awt.Point;
+import java.awt.Window;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.MouseEvent;
@@ -21,18 +22,23 @@ import java.awt.event.MouseMotionListener;
 import java.awt.font.LineMetrics;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.util.Locale;
 
+import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.ImageIcon;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JMenuItem;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
+import javax.swing.SwingUtilities;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
 
@@ -53,20 +59,25 @@ import org.infinity.gui.ViewerUtil.StructListPanel;
 import org.infinity.resource.AbstractStruct;
 import org.infinity.resource.Profile;
 import org.infinity.resource.ResourceFactory;
+import org.infinity.resource.StructEntry;
 import org.infinity.resource.graphics.BamDecoder;
 import org.infinity.resource.graphics.ColorConvert;
 import org.infinity.resource.graphics.MosDecoder;
 import org.infinity.resource.graphics.BamDecoder.BamControl;
 import org.infinity.resource.key.ResourceEntry;
+import org.infinity.util.Misc;
 import org.infinity.util.StringTable;
+import org.infinity.util.io.StreamUtils;
 
 public class ViewerMap extends JPanel
 {
-  // Needed to determine map edges to travel from/to
+  /** Needed to determine map edges to travel from/to. */
   private enum Direction { NORTH, WEST, SOUTH, EAST }
 
   private final JPopupMenu pmOptions = new JPopupMenu("Options");
+  private final JMenuItem miExportMap = new JMenuItem("Export as PNG...");
   private final JCheckBoxMenuItem miShowIcons = new JCheckBoxMenuItem("Show all map icons", true);
+  private final JCheckBoxMenuItem miShowIconLabels = new JCheckBoxMenuItem("Show icons labels", true);
   private final JCheckBoxMenuItem miShowDistances = new JCheckBoxMenuItem("Show travel distances", false);
   private final JCheckBoxMenuItem miScaling =
       new JCheckBoxMenuItem("Scale map icons", Profile.getGame() == Profile.Game.PSTEE);
@@ -104,14 +115,21 @@ public class ViewerMap extends JPanel
       dotBackup = new BufferedImage(iconDot.getWidth(), iconDot.getHeight(), iconDot.getType());
       dotX = dotY = -1;
 
+      miExportMap.setMnemonic('x');
+      miExportMap.addActionListener(listeners);
       miShowIcons.setMnemonic('i');
       miShowIcons.addActionListener(listeners);
+      miShowIconLabels.setMnemonic('l');
+      miShowIconLabels.addActionListener(listeners);
       miShowDistances.setMnemonic('d');
       miShowDistances.addActionListener(listeners);
       miScaling.setMnemonic('s');
       miScaling.addActionListener(listeners);
       miScaling.setToolTipText("Scales map icon locations according to the worldmap's scaling factor. (Needed for some games)");
+      pmOptions.add(miExportMap);
+      pmOptions.addSeparator();
       pmOptions.add(miShowIcons);
+      pmOptions.add(miShowIconLabels);
       pmOptions.add(miShowDistances);
       pmOptions.add(miScaling);
 
@@ -126,63 +144,63 @@ public class ViewerMap extends JPanel
           }
         }
 
-        if (ResourceFactory.resourceExists(((ResourceRef)wmpMap.getAttribute(MapEntry.WMP_MAP_RESREF)).getResourceName())) {
-          mapOrig = loadMap();
-          rcMap = new RenderCanvas(ColorConvert.cloneImage(mapOrig));
-          rcMap.addMouseListener(listeners);
-          rcMap.addMouseMotionListener(listeners);
+        mapOrig = loadMap();
 
-          int mapTargetWidth = ((IsNumeric)mapEntry.getAttribute(MapEntry.WMP_MAP_WIDTH)).getValue();
-          if (mapTargetWidth <= 0) { mapTargetWidth = mapOrig.getWidth(); }
-          int mapTargetHeight = ((IsNumeric)mapEntry.getAttribute(MapEntry.WMP_MAP_HEIGHT)).getValue();
-          if (mapTargetHeight <= 0) { mapTargetHeight = mapOrig.getHeight(); }
-          mapScaleX = (float)mapOrig.getWidth() / (float)mapTargetWidth;
-          mapScaleY = (float)mapOrig.getHeight() / (float)mapTargetHeight;
+        int mapTargetWidth = ((IsNumeric)mapEntry.getAttribute(MapEntry.WMP_MAP_WIDTH)).getValue();
+        if (mapTargetWidth <= 0) { mapTargetWidth = (mapOrig != null) ? mapOrig.getWidth() : 640; }
+        int mapTargetHeight = ((IsNumeric)mapEntry.getAttribute(MapEntry.WMP_MAP_HEIGHT)).getValue();
+        if (mapTargetHeight <= 0) { mapTargetHeight = (mapOrig != null) ? mapOrig.getHeight() : 480; }
 
-          listPanel = (StructListPanel)ViewerUtil.makeListPanel("Areas", wmpMap, AreaEntry.class, AreaEntry.WMP_AREA_CURRENT,
-                                                                new WmpAreaListRenderer(mapIcons), listeners);
-          JScrollPane mapScroll = new JScrollPane(rcMap);
-          mapScroll.getVerticalScrollBar().setUnitIncrement(16);
-          mapScroll.getHorizontalScrollBar().setUnitIncrement(16);
-          mapScroll.setBorder(BorderFactory.createEmptyBorder());
+        if (mapOrig == null)
+          mapOrig = ColorConvert.createCompatibleImage(mapTargetWidth, mapTargetHeight, false);
 
-          JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, mapScroll, listPanel);
-          split.setDividerLocation(NearInfinity.getInstance().getWidth() - 475);
-          setLayout(new BorderLayout());
-          add(split, BorderLayout.CENTER);
+        rcMap = new RenderCanvas(ColorConvert.cloneImage(mapOrig));
+        rcMap.addMouseListener(listeners);
+        rcMap.addMouseMotionListener(listeners);
 
-          JPanel pInfo = new JPanel(new FlowLayout(FlowLayout.LEADING, 8, 0));
-          lInfoSize = new JLabel(String.format("Worldmap size: %1$d x %2$d pixels", mapOrig.getWidth(), mapOrig.getHeight()));
-          lInfoSize.setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
-          lInfoPos = new JLabel();
-          lInfoPos.setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
-          pInfo.add(lInfoSize);
-          pInfo.add(lInfoPos);
-          add(pInfo, BorderLayout.SOUTH);
+        mapScaleX = (float)mapOrig.getWidth() / (float)mapTargetWidth;
+        mapScaleY = (float)mapOrig.getHeight() / (float)mapTargetHeight;
 
-        } else {
-          rcMap = null;
-          mapOrig = null;
-        }
+        listPanel = (StructListPanel)ViewerUtil.makeListPanel("Areas", wmpMap, AreaEntry.class, AreaEntry.WMP_AREA_CURRENT,
+                                                              new WmpAreaListRenderer(mapIcons), listeners);
+        JScrollPane mapScroll = new JScrollPane(rcMap);
+        mapScroll.getVerticalScrollBar().setUnitIncrement(16);
+        mapScroll.getHorizontalScrollBar().setUnitIncrement(16);
+        mapScroll.setBorder(BorderFactory.createEmptyBorder());
+
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, mapScroll, listPanel);
+        int viewerWidth = NearInfinity.getInstance().getWidth() - NearInfinity.getInstance().getResourceTree().getWidth();
+        split.setDividerLocation(viewerWidth - viewerWidth / 4);  // have area list occupy ca. 25% of resource view width
+        setLayout(new BorderLayout());
+        add(split, BorderLayout.CENTER);
+
+        JPanel pInfo = new JPanel(new FlowLayout(FlowLayout.LEADING, 8, 0));
+        lInfoSize = new JLabel(String.format("Worldmap size: %d x %d pixels", mapOrig.getWidth(), mapOrig.getHeight()));
+        lInfoSize.setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
+        lInfoPos = new JLabel();
+        lInfoPos.setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
+        pInfo.add(lInfoSize);
+        pInfo.add(lInfoPos);
+        add(pInfo, BorderLayout.SOUTH);
       } catch (Throwable t) {
         t.printStackTrace();
       }
 
       // applying preselected overlays
-      showOverlays(miShowIcons.isSelected(), miShowDistances.isSelected());
+      showOverlays(miShowIcons.isSelected(), miShowIconLabels.isSelected(), miShowDistances.isSelected());
 
     } finally {
       WindowBlocker.blockWindow(false);
     }
   }
 
-  // Returns current map entry structure
+  /** Returns current map entry structure. */
   private MapEntry getEntry()
   {
     return mapEntry;
   }
 
-  // Load and return map graphics
+  /** Load and return map graphics. */
   private BufferedImage loadMap()
   {
     String mapName = ((ResourceRef)getEntry().getAttribute(MapEntry.WMP_MAP_RESREF)).getResourceName();
@@ -195,18 +213,21 @@ public class ViewerMap extends JPanel
     return null;
   }
 
-  // show popup menu
+  /** Show popup menu. */
   private void showPopup(Component invoker, int x, int y)
   {
     pmOptions.show(invoker, x, y);
   }
 
-  // display either or both map icons and travel distances
-  private void showOverlays(boolean showIcons, boolean showDistances)
+  /** Display either or both map icons and travel distances. */
+  private void showOverlays(boolean showIcons, boolean showIconLabels, boolean showDistances)
   {
     resetMap();
     if (showIcons) {
       showMapIcons();
+      if (showIconLabels) {
+        showMapIconLabels();
+      }
       if (showDistances) {
         showMapDistances(listPanel.getList().getSelectedIndex());
       }
@@ -215,22 +236,19 @@ public class ViewerMap extends JPanel
     rcMap.repaint();
   }
 
-  // Draws map icons onto the map
+  /** Draws map icons onto the map. */
   private void showMapIcons()
   {
     if (mapIcons != null) {
       Graphics2D g = ((BufferedImage)rcMap.getImage()).createGraphics();
       try {
-        g.setFont(g.getFont().deriveFont(g.getFont().getSize2D()*0.9f));
-
-        // two passes are required to prevent text boxes to be covered by icons
         for (int i = 0, count = listPanel.getList().getModel().getSize(); i < count; i++) {
-          AreaEntry area = getAreaEntry(i);
+          AreaEntry area = getAreaEntry(i, true);
           if (area != null) {
             int iconIndex = ((DecNumber)area.getAttribute(AreaEntry.WMP_AREA_ICON_INDEX)).getValue();
             int frameIndex = mapIconsCtrl.cycleGetFrameIndexAbsolute(iconIndex, 0);
             if (frameIndex >= 0) {
-              BufferedImage mapIcon = (BufferedImage)mapIcons.frameGet(mapIconsCtrl, frameIndex);
+              final Image mapIcon = mapIcons.frameGet(mapIconsCtrl, frameIndex);
               Point p = getAreaEntryPosition(area, isScaling());
               int width = mapIcons.getFrameInfo(frameIndex).getWidth();
               int height = mapIcons.getFrameInfo(frameIndex).getHeight();
@@ -242,11 +260,24 @@ public class ViewerMap extends JPanel
             }
           }
         }
+      } finally {
+        g.dispose();
+        g = null;
+      }
+    }
+  }
 
-        // second pass
+  /** Draws map icon labels onto the map. */
+  private void showMapIconLabels()
+  {
+    if (mapIcons != null) {
+      Graphics2D g = ((BufferedImage)rcMap.getImage()).createGraphics();
+      try {
+        g.setFont(Misc.getScaledFont(g.getFont()));
+        g.setFont(g.getFont().deriveFont(g.getFont().getSize2D()*0.9f));
         final Color WHITE_BLENDED = new Color(0xc0ffffff, true);
         for (int i = 0, count = listPanel.getList().getModel().getSize(); i < count; i++) {
-          AreaEntry area = getAreaEntry(i);
+          AreaEntry area = getAreaEntry(i, true);
           if (area != null) {
             int iconIndex = ((DecNumber)area.getAttribute(AreaEntry.WMP_AREA_ICON_INDEX)).getValue();
             int frameIndex = mapIconsCtrl.cycleGetFrameIndexAbsolute(iconIndex, 0);
@@ -316,10 +347,10 @@ public class ViewerMap extends JPanel
     }
   }
 
-  // Displays all map distances from the specified area (by index)
+  /** Displays all map distances from the specified area (by index). */
   private void showMapDistances(int areaIndex)
   {
-    AreaEntry area = getAreaEntry(areaIndex);
+    AreaEntry area = getAreaEntry(areaIndex, true);
     if (area != null) {
       final Direction[] srcDir = { Direction.NORTH, Direction.WEST, Direction.SOUTH, Direction.EAST };
       final Color[] dirColor = { Color.GREEN, Color.RED, Color.CYAN, Color.YELLOW };
@@ -337,7 +368,7 @@ public class ViewerMap extends JPanel
       links[7] = ((SectionCount)area.getAttribute(AreaEntry.WMP_AREA_NUM_LINKS_EAST)).getValue();
       for (int dir = 0; dir < srcDir.length; dir++) {
         Direction curDir = srcDir[dir];
-        Point ptOrigin = getMapIconCoordinate(areaIndex, curDir);
+        Point ptOrigin = getMapIconCoordinate(areaIndex, curDir, true);
         for (int dirIndex = 0, dirCount = links[dir * 2 + 1]; dirIndex < dirCount; dirIndex++) {
           int ofsLink = ofsLinkBase + (links[dir * 2] + dirIndex)*linkSize;
           AreaLink destLink = (AreaLink)area.getAttribute(ofsLink, false);
@@ -353,7 +384,7 @@ public class ViewerMap extends JPanel
             } else if (flag.isFlagSet(3)) {
               dstDir = Direction.WEST;
             }
-            Point ptTarget = getMapIconCoordinate(dstAreaIndex, dstDir);
+            Point ptTarget = getMapIconCoordinate(dstAreaIndex, dstDir, false);
 
             // checking for random encounters during travels
             boolean hasRandomEncounters = false;
@@ -383,7 +414,7 @@ public class ViewerMap extends JPanel
               g.drawLine(ptOrigin.x, ptOrigin.y, ptTarget.x, ptTarget.y);
 
               // printing travel time (in hours)
-              String duration = String.format("%1$d h", ((DecNumber)destLink.getAttribute(AreaLink.WMP_LINK_DISTANCE_SCALE)).getValue() * 4);
+              String duration = String.format("%d h", ((DecNumber)destLink.getAttribute(AreaLink.WMP_LINK_DISTANCE_SCALE)).getValue() * 4);
               LineMetrics lm = g.getFont().getLineMetrics(duration, g.getFontRenderContext());
               Rectangle2D rectText = g.getFont().getStringBounds(duration, g.getFontRenderContext());
               int textX = ptOrigin.x + ((ptTarget.x - ptOrigin.x) - rectText.getBounds().width) / 2;
@@ -404,7 +435,7 @@ public class ViewerMap extends JPanel
     }
   }
 
-  // Returns a properly scaled map icon position
+  /** Returns a properly scaled map icon position. */
   private Point getAreaEntryPosition(AreaEntry areaEntry, boolean scaled)
   {
     Point p = new Point();
@@ -419,10 +450,10 @@ public class ViewerMap extends JPanel
     return p;
   }
 
-  // Returns a pixel coordinate for one of the edges of the specified area icon
-  private Point getMapIconCoordinate(int areaIndex, Direction dir)
+  /** Returns a pixel coordinate for one of the edges of the specified area icon. */
+  private Point getMapIconCoordinate(int areaIndex, Direction dir, boolean byPanel)
   {
-    AreaEntry area = getAreaEntry(areaIndex);
+    AreaEntry area = getAreaEntry(areaIndex, byPanel);
     if (area != null) {
       Point p = getAreaEntryPosition(area, isScaling());
       int iconIndex = ((DecNumber)area.getAttribute(AreaEntry.WMP_AREA_ICON_INDEX)).getValue();
@@ -460,17 +491,26 @@ public class ViewerMap extends JPanel
     return null;
   }
 
-  // Returns area structure of specified item index
-  private AreaEntry getAreaEntry(int index)
+  /** Returns area structure of specified item index. */
+  private AreaEntry getAreaEntry(int index, boolean byPanel)
   {
-    if (index >= 0 && index < listPanel.getList().getModel().getSize()) {
-      return (AreaEntry)listPanel.getList().getModel().getElementAt(index);
+    AreaEntry retVal = null;
+    if (byPanel) {
+      if (index >= 0 && index < listPanel.getList().getModel().getSize()) {
+        retVal = (AreaEntry)listPanel.getList().getModel().getElementAt(index);
+      }
     } else {
-      return null;
+      if (index >= 0 && index < ((IsNumeric)mapEntry.getAttribute(MapEntry.WMP_MAP_NUM_AREAS)).getValue()) {
+        StructEntry e = mapEntry.getAttribute(AreaEntry.WMP_AREA + " " + index);
+        if (e instanceof AreaEntry) {
+          retVal = (AreaEntry)e;
+        }
+      }
     }
+    return retVal;
   }
 
-  // Show "dot" on specified map icon, optionally restore background graphics
+  /** Show "dot" on specified map icon, optionally restore background graphics. */
   private void showDot(AreaEntry entry, boolean restore)
   {
     if (restore) {
@@ -497,7 +537,7 @@ public class ViewerMap extends JPanel
     }
   }
 
-  // Stores background graphics of "dot"
+  /** Stores background graphics of "dot". */
   private void storeDot(AreaEntry entry)
   {
     if (entry != null) {
@@ -522,7 +562,7 @@ public class ViewerMap extends JPanel
     }
   }
 
-  // Restores background graphics of "dot"
+  /** Restores background graphics of "dot". */
   private void restoreDot()
   {
     if (dotX != -1 && dotY != -1) {
@@ -543,7 +583,7 @@ public class ViewerMap extends JPanel
     }
   }
 
-  // Attempts to restore the whole map graphics
+  /** Attempts to restore the whole map graphics. */
   private void resetMap()
   {
     Graphics2D g = ((BufferedImage)rcMap.getImage()).createGraphics();
@@ -555,22 +595,65 @@ public class ViewerMap extends JPanel
     }
   }
 
-  // Returns whether to apply map scaling factor
+  /** Returns whether to apply map scaling factor. */
   private boolean isScaling()
   {
     return miScaling.isSelected();
   }
 
-  // Shows specified coordinates as text info. Hides display for negative coordinates.
+  /** Shows specified coordinates as text info. Hides display for negative coordinates. */
   private void updateCursorInfo(int x, int y)
   {
     if (lInfoPos != null) {
       if (x >= 0 && y >= 0) {
-        lInfoPos.setText(String.format("Cursor at (%1$d, %2$d)", x, y));
+        lInfoPos.setText(String.format("Cursor at (%d, %d)", x, y));
       } else {
         lInfoPos.setText("");
       }
     }
+  }
+
+  /** Exports current map to PNG. */
+  private void exportMap()
+  {
+    final Window wnd = SwingUtilities.getWindowAncestor(this);
+    WindowBlocker.blockWindow(wnd, true);
+
+    SwingUtilities.invokeLater(new Runnable() {
+      @Override
+      public void run()
+      {
+        ByteArrayOutputStream os = new ByteArrayOutputStream();
+        boolean bRet = false;
+        try {
+          restoreDot();
+          BufferedImage srcImage = (BufferedImage)rcMap.getImage();
+          BufferedImage dstImage = ColorConvert.createCompatibleImage(srcImage.getWidth(),
+                                                                      srcImage.getHeight(),
+                                                                      srcImage.getTransparency());
+          Graphics2D g = dstImage.createGraphics();
+          g.drawImage(srcImage, 0, 0, null);
+          g.dispose();
+          srcImage = null;
+          bRet = ImageIO.write(dstImage, "png", os);
+          dstImage.flush();
+          dstImage = null;
+        } catch (Exception e) {
+          e.printStackTrace();
+        } finally {
+          showDot((AreaEntry)listPanel.getList().getSelectedValue(), false);
+          WindowBlocker.blockWindow(wnd, false);
+        }
+        if (bRet) {
+          final ResourceEntry entry = getEntry().getParent().getResourceEntry();
+          final String fileName = StreamUtils.replaceFileExtension(entry.getResourceName(), "PNG");
+          ResourceFactory.exportResource(entry, StreamUtils.getByteBuffer(os.toByteArray()), fileName, wnd);
+        } else {
+          JOptionPane.showMessageDialog(wnd, "Error while exporting map as graphics.", "Error",
+                                        JOptionPane.ERROR_MESSAGE);
+        }
+      }
+    });
   }
 
 //-------------------------- INNER CLASSES --------------------------
@@ -588,7 +671,17 @@ public class ViewerMap extends JPanel
           if (!miShowIcons.isSelected() && miShowDistances.isSelected()) {
             miShowDistances.setSelected(false);
           }
-          showOverlays(miShowIcons.isSelected(), miShowDistances.isSelected());
+          showOverlays(miShowIcons.isSelected(), miShowIconLabels.isSelected(), miShowDistances.isSelected());
+        } finally {
+          WindowBlocker.blockWindow(false);
+        }
+      } else if (e.getSource() == miShowIconLabels) {
+        WindowBlocker.blockWindow(true);
+        try {
+          if (miShowIconLabels.isSelected() && !miShowIcons.isSelected()) {
+            miShowIcons.setSelected(true);
+          }
+          showOverlays(miShowIcons.isSelected(), miShowIconLabels.isSelected(), miShowDistances.isSelected());
         } finally {
           WindowBlocker.blockWindow(false);
         }
@@ -598,7 +691,7 @@ public class ViewerMap extends JPanel
           if (miShowDistances.isSelected() && !miShowIcons.isSelected()) {
             miShowIcons.setSelected(true);
           }
-          showOverlays(miShowIcons.isSelected(), miShowDistances.isSelected());
+          showOverlays(miShowIcons.isSelected(), miShowIconLabels.isSelected(), miShowDistances.isSelected());
         } finally {
           WindowBlocker.blockWindow(false);
         }
@@ -606,11 +699,13 @@ public class ViewerMap extends JPanel
         try {
           WindowBlocker.blockWindow(true);
           if (miShowIcons.isSelected()) {
-            showOverlays(miShowIcons.isSelected(), miShowDistances.isSelected());
+            showOverlays(miShowIcons.isSelected(), miShowIconLabels.isSelected(), miShowDistances.isSelected());
           }
         } finally {
           WindowBlocker.blockWindow(false);
         }
+      } else if (e.getSource() == miExportMap) {
+        exportMap();
       }
     }
 
@@ -683,7 +778,7 @@ public class ViewerMap extends JPanel
       if (!event.getValueIsAdjusting()) {
         JList<?> list = (JList<?>)event.getSource();
         if (miShowDistances.isSelected()) {
-          showOverlays(miShowIcons.isSelected(), miShowDistances.isSelected());
+          showOverlays(miShowIcons.isSelected(), miShowIconLabels.isSelected(), miShowDistances.isSelected());
         } else {
           showDot((AreaEntry)list.getSelectedValue(), true);
         }

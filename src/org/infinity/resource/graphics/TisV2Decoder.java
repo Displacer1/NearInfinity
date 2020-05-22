@@ -67,7 +67,7 @@ public class TisV2Decoder extends TisDecoder
   {
     int page = getPvrzPage(tileIdx);
     if (page >= 0) {
-      return String.format("%1$s%2$02d.PVRZ", getPvrzFileBase(), page);
+      return String.format("%s%02d.PVRZ", getPvrzFileBase(), page);
     } else {
       return "";
     }
@@ -167,11 +167,9 @@ public class TisV2Decoder extends TisDecoder
         }
         tisBuffer = getResourceEntry().getResourceBuffer();
 
-        String name = getResourceEntry().getResourceName();
-        int idx = name.lastIndexOf('.');
-        if (idx < 0) idx = name.length();
+        String name = getResourceEntry().getResourceRef();
         pvrzNameBase = getResourceEntry().getResourceName().substring(0, 1) +
-                       getResourceEntry().getResourceName().substring(2, idx);
+                       getResourceEntry().getResourceName().substring(2, name.length());
 
         setType(Type.PVRZ);
 
@@ -187,7 +185,7 @@ public class TisV2Decoder extends TisDecoder
   private PvrDecoder getPVR(int page)
   {
     try {
-      String name = String.format("%1$s%2$02d.PVRZ", pvrzNameBase, page);
+      String name = String.format("%s%02d.PVRZ", pvrzNameBase, page);
       ResourceEntry entry = ResourceFactory.getResourceEntry(name);
       if (entry != null) {
         return PvrDecoder.loadPvr(entry);

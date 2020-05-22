@@ -1,17 +1,15 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.cre;
 
 import java.awt.event.ItemEvent;
 import java.awt.event.ItemListener;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -22,7 +20,6 @@ import java.util.Set;
 
 import javax.swing.JButton;
 import javax.swing.JComponent;
-import javax.swing.JFileChooser;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 
@@ -47,6 +44,8 @@ import org.infinity.datatype.StringRef;
 import org.infinity.datatype.TextString;
 import org.infinity.datatype.Unknown;
 import org.infinity.datatype.UnsignDecNumber;
+import org.infinity.datatype.UpdateEvent;
+import org.infinity.datatype.UpdateListener;
 import org.infinity.gui.ButtonPanel;
 import org.infinity.gui.ButtonPopupMenu;
 import org.infinity.gui.StructViewer;
@@ -70,12 +69,35 @@ import org.infinity.search.SearchOptions;
 import org.infinity.util.IdsMap;
 import org.infinity.util.IdsMapCache;
 import org.infinity.util.IdsMapEntry;
+import org.infinity.util.IniMap;
+import org.infinity.util.IniMapCache;
+import org.infinity.util.IniMapEntry;
+import org.infinity.util.IniMapSection;
 import org.infinity.util.LongIntegerHashMap;
+import org.infinity.util.Misc;
 import org.infinity.util.StringTable;
+import org.infinity.util.Table2da;
 import org.infinity.util.io.StreamUtils;
 
+/**
+ * This resource describes a "creature". Creatures have several stats (some visible
+ * through the game UI) which are generally mapped to {@link IdsMap IDS} or
+ * {@link Table2da 2DA} files.
+ * <p>
+ * Planescape: Torment engine specific notes:
+ * <ul>
+ * <li>PST creature disguises are not stored as a field in the creature file, they
+ * are held as a GLOBAL variable, named {@code 'appearance'}. A value of 1 equates
+ * to zombie disguise, a value of 2 equates to dustman disguise.</li>
+ * <li>Several fields for The Nameless One are generated dynamically, and as a result
+ * changing fields in the relevant CRE file will have no effect.</li>
+ * </ul>
+ *
+ * @see <a href="https://gibberlings3.github.io/iesdp/file_formats/ie_formats/cre_v1.htm">
+ * https://gibberlings3.github.io/iesdp/file_formats/ie_formats/cre_v1.htm</a>
+ */
 public final class CreResource extends AbstractStruct
-  implements Resource, HasAddRemovable, AddRemovable, HasViewerTabs, ItemListener
+  implements Resource, HasAddRemovable, AddRemovable, HasViewerTabs, ItemListener, UpdateListener
 {
   // CHR-specific field labels
   public static final String CHR_NAME                         = "Character name";
@@ -169,6 +191,7 @@ public final class CreResource extends AbstractStruct
   public static final String CRE_LEVEL_WIZARD                 = "Wizard level";
   public static final String CRE_SOUND_SLOT_FMT               = "Sound: %s";
   public static final String CRE_SOUND_SLOT_GENERIC           = "Soundset string";
+  public static final String CRE_ENCHANTMENT_LEVEL            = "Enchantment level";
   public static final String CRE_FEATS_1                      = "Feats (1/3)";
   public static final String CRE_FEATS_2                      = "Feats (2/3)";
   public static final String CRE_FEATS_3                      = "Feats (3/3)";
@@ -247,7 +270,6 @@ public final class CreResource extends AbstractStruct
   public static final String CRE_FAVORED_ENEMY_FMT            = "Favored enemy %d";
   public static final String CRE_RACIAL_ENEMY                 = "Racial enemy";
   public static final String CRE_SUBRACE                      = "Subrace";
-  public static final String CRE_UNDEAD_LEVEL                 = "Undead level";
   public static final String CRE_TRACKING                     = "Tracking";
   public static final String CRE_TARGET                       = "Target";
   public static final String CRE_LEVEL_FIRST_CLASS            = "Level first class";
@@ -408,7 +430,7 @@ public final class CreResource extends AbstractStruct
     "Original class: Fighter", "Original class: Mage", "Original class: Cleric", "Original class: Thief",
     "Original class: Druid", "Original class: Ranger", "Fallen paladin", "Fallen ranger",
     "Export allowed", "Hide status", "Large creature", "Moving between areas", "Been in party",
-    "Holding item", "Clear all flags", "", "", "EE: No exploding death", "", "EE: Ignore nightmare mode",
+    "Holding item", "Reset bit 16", null, null, "EE: No exploding death", null, "EE: Ignore nightmare mode",
     "EE: No tooltip", "Allegiance tracking", "General tracking", "Race tracking", "Class tracking",
     "Specifics tracking", "Gender tracking", "Alignment tracking", "Uninterruptible"};
   public static final String[] s_feats1 = {
@@ -436,14 +458,13 @@ public final class CreResource extends AbstractStruct
       "Aamimar/Drow/Gold dwarf/Strongheart halfling/Deep gnome",
       "Tiefling/Wild elf/Gray dwarf/Ghostwise halfling"};
   public static final String[] s_attributes_pst = {
-    "No flags set", "Auto-calc marker rect", "Translucent", "", "", "Track script name", "Increment kill count",
+    "No flags set", "Auto-calc marker rect", "Translucent", null, null, "Track script name", "Increment kill count",
     "Script name only", "Track faction death", "Track team death", "Invulnerable",
     "Modify good on death", "Modify law on death", "Modify lady on death", "Modify murder on death",
-    "No dialogue turn", "Call for help", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "Death globals set (internal)", "Area supplemental"};
+    "No dialogue turn", "Call for help", null, null, null, null, null, null, null, null, null, null, null, null, null, null, "Death globals set (internal)", "Area supplemental"};
   public static final String[] s_attributes_iwd2 = {"No flags set", "Mental fortitude", "Critical hit immunity",
                                                     "Cannot be paladin", "Cannot be monk"};
   public static final String[] s_attacks = {"0", "1", "2", "3", "4", "5", "1/2", "3/2", "5/2", "7/2", "9/2"};
-  public static final String[] s_noyes = {"No", "Yes"};
   public static final String[] s_visible = {"Shown", "Hidden"};
   public static final String[] s_profLabels = {"Active class", "Original class"};
   public static final String[] s_effversion = {"Version 1", "Version 2"};
@@ -526,7 +547,7 @@ public final class CreResource extends AbstractStruct
           scriptName = StreamUtils.readString(buffer, offset + 804, 32);
         } else if (version.equalsIgnoreCase("V2.2")) {
           scriptName = StreamUtils.readString(buffer, offset + 916, 32);
-        } else if (version.equalsIgnoreCase("V9.0")) {
+        } else if (version.equalsIgnoreCase("V9.0") || version.equalsIgnoreCase("V9.1")) {
           scriptName = StreamUtils.readString(buffer, offset + 744, 32);
         }
         if (scriptName.equals("") || scriptName.equalsIgnoreCase("None")) {
@@ -554,8 +575,7 @@ public final class CreResource extends AbstractStruct
 
   private static void adjustEntryOffsets(AbstractStruct struct, int amount)
   {
-    for (int i = 0; i < struct.getFieldCount(); i++) {
-      StructEntry structEntry = struct.getField(i);
+    for (final StructEntry structEntry : struct.getFields()) {
       structEntry.setOffset(structEntry.getOffset() + amount);
       if (structEntry instanceof AbstractStruct)
         adjustEntryOffsets((AbstractStruct)structEntry, amount);
@@ -567,30 +587,19 @@ public final class CreResource extends AbstractStruct
     if (!resourceEntry.getExtension().equalsIgnoreCase("CHR")) {
       return;
     }
-    String resourcename = resourceEntry.toString();
-    resourcename = resourcename.substring(0, resourcename.lastIndexOf(".")) + ".CRE";
-    JFileChooser chooser = new JFileChooser(Profile.getGameRoot().toFile());
-    chooser.setDialogTitle("Convert CHR to CRE");
-    chooser.setSelectedFile(new File(chooser.getCurrentDirectory(), resourcename));
-    if (chooser.showSaveDialog(NearInfinity.getInstance()) == JFileChooser.APPROVE_OPTION) {
-      Path output = chooser.getSelectedFile().toPath();
-      if (Files.exists(output)) {
-        String options[] = {"Overwrite", "Cancel"};
-        int result = JOptionPane.showOptionDialog(NearInfinity.getInstance(), output + " exists. Overwrite?",
-                                                  "Save resource", JOptionPane.YES_NO_OPTION,
-                                                  JOptionPane.WARNING_MESSAGE, null, options, options[0]);
-        if (result != 0) return;
-      }
+    final String fileName = StreamUtils.replaceFileExtension(resourceEntry.getResourceName(), "CRE");
+    final Path path = ResourceFactory.getExportFileDialog(NearInfinity.getInstance(), fileName, false);
+    if (path != null) {
       try {
         CreResource crefile = (CreResource)ResourceFactory.getResource(resourceEntry);
-        while (!crefile.getField(0).toString().equals("CRE ")) {
+        while (!crefile.getFields().get(0).toString().equals("CRE ")) {
           crefile.removeField(0);
         }
         convertToSemiStandard(crefile);
-        try (OutputStream os = StreamUtils.getOutputStream(output, true)) {
+        try (OutputStream os = StreamUtils.getOutputStream(path, true)) {
           crefile.write(os);
         }
-        JOptionPane.showMessageDialog(NearInfinity.getInstance(), "File saved to " + output,
+        JOptionPane.showMessageDialog(NearInfinity.getInstance(), "File saved to " + path,
                                       "Conversion complete", JOptionPane.INFORMATION_MESSAGE);
       } catch (Exception e) {
         e.printStackTrace();
@@ -602,7 +611,8 @@ public final class CreResource extends AbstractStruct
 
   private static void convertToSemiStandard(CreResource crefile)
   {
-    if (!crefile.getField(1).toString().equals("V1.0")) {
+    final List<StructEntry> fields = crefile.getFields();
+    if (!fields.get(1).toString().equals("V1.0")) {
       System.err.println("Conversion to semi-standard aborted: Unsupported CRE version");
       return;
     }
@@ -625,42 +635,42 @@ public final class CreResource extends AbstractStruct
     SectionOffset items_offset = (SectionOffset)crefile.getAttribute(CRE_OFFSET_ITEMS);
     SectionOffset effects_offset = (SectionOffset)crefile.getAttribute(CRE_OFFSET_EFFECTS);
 
-    int indexStructs = crefile.getIndexOf(effects_offset) + 3; // Start of non-permanent section
-    List<StructEntry> newlist = new ArrayList<StructEntry>(crefile.getFieldCount());
+    final int indexStructs = fields.indexOf(effects_offset) + 3; // Start of non-permanent section
+    final List<StructEntry> newlist = new ArrayList<>(fields.size());
     for (int i = 0; i < indexStructs; i++)
-      newlist.add(crefile.getField(i));
+      newlist.add(fields.get(i));
 
     int offsetStructs = 0x2d4;
     knownspells_offset.setValue(offsetStructs);
-    offsetStructs = copyStruct(crefile.getList(), newlist, indexStructs, offsetStructs, KnownSpells.class);
+    offsetStructs = copyStruct(fields, newlist, indexStructs, offsetStructs, KnownSpells.class);
 
     memspellinfo_offset.setValue(offsetStructs);
-    offsetStructs = copyStruct(crefile.getList(), newlist, indexStructs, offsetStructs, SpellMemorization.class);
+    offsetStructs = copyStruct(fields, newlist, indexStructs, offsetStructs, SpellMemorization.class);
 
     memspells_offset.setValue(offsetStructs);
     // XXX: mem spells are not directly stored in crefile.list
     // and added by addFlatList on the Spell Memorization entries
     // (but the offsets are wrong, so we need to realign them with copyStruct)
-    List<StructEntry> trashlist = new ArrayList<StructEntry>();
-    for (int i = indexStructs; i < crefile.getFieldCount(); i++) {
-      StructEntry entry = crefile.getField(i);
+    List<StructEntry> trashlist = new ArrayList<>();
+    for (int i = indexStructs; i < fields.size(); i++) {
+      StructEntry entry = fields.get(i);
       if (entry instanceof SpellMemorization) {
-        offsetStructs = copyStruct(((SpellMemorization)entry).getList(), trashlist, 0, offsetStructs, MemorizedSpells.class);
+        offsetStructs = copyStruct(((SpellMemorization)entry).getFields(), trashlist, 0, offsetStructs, MemorizedSpells.class);
       }
     }
 
     effects_offset.setValue(offsetStructs);
-    offsetStructs =
-    copyStruct(crefile.getList(), newlist, indexStructs, offsetStructs, effects_offset.getSection());
+    offsetStructs = copyStruct(fields, newlist, indexStructs, offsetStructs, effects_offset.getSection());
 
     items_offset.setValue(offsetStructs);
-    offsetStructs = copyStruct(crefile.getList(), newlist, indexStructs, offsetStructs, Item.class);
+    offsetStructs = copyStruct(fields, newlist, indexStructs, offsetStructs, Item.class);
 
     itemslots_offset.setValue(offsetStructs);
-    offsetStructs = copyStruct(crefile.getList(), newlist, indexStructs, offsetStructs, DecNumber.class);
-    copyStruct(crefile.getList(), newlist, indexStructs, offsetStructs, Unknown.class);
+    offsetStructs = copyStruct(fields, newlist, indexStructs, offsetStructs, DecNumber.class);
+    copyStruct(fields, newlist, indexStructs, offsetStructs, Unknown.class);
 
-    crefile.setList(newlist);
+    fields.clear();
+    fields.addAll(newlist);
   }
 
   private static int copyStruct(List<StructEntry> oldlist, List<StructEntry> newlist,
@@ -825,7 +835,7 @@ public final class CreResource extends AbstractStruct
   @Override
   public void write(OutputStream os) throws IOException
   {
-    super.writeFlatList(os);
+    super.writeFlatFields(os);
   }
 
 
@@ -1011,7 +1021,7 @@ public final class CreResource extends AbstractStruct
     addField(new DecNumber(buffer, offset + 12, 4, CRE_XP_VALUE));
     addField(new DecNumber(buffer, offset + 16, 4, CRE_XP));
     addField(new DecNumber(buffer, offset + 20, 4, CRE_GOLD));
-    addField(new IdsFlag(buffer, offset + 24, 4, CRE_STATUS, "STATE.IDS"));
+    addField(uniqueIdsFlag(new IdsFlag(buffer, offset + 24, 4, CRE_STATUS, "STATE.IDS"), "STATE.IDS", '_'));
     addField(new DecNumber(buffer, offset + 28, 2, CRE_HP_CURRENT));
     addField(new DecNumber(buffer, offset + 30, 2, CRE_HP_MAX));
     addField(new IdsBitmap(buffer, offset + 32, 4, CRE_ANIMATION, "ANIMATE.IDS"));
@@ -1022,11 +1032,11 @@ public final class CreResource extends AbstractStruct
     addField(new ColorValue(buffer, offset + 40, 1, CRE_COLOR_LEATHER));
     addField(new ColorValue(buffer, offset + 41, 1, CRE_COLOR_ARMOR));
     addField(new ColorValue(buffer, offset + 42, 1, CRE_COLOR_HAIR));
-    Bitmap effect_version = (Bitmap)addField(new Bitmap(buffer, offset + 43, 1, CRE_EFFECT_VERSION, s_effversion));
+    Bitmap effect_version = addField(new Bitmap(buffer, offset + 43, 1, CRE_EFFECT_VERSION, s_effversion));
     addField(new ResourceRef(buffer, offset + 44, CRE_PORTRAIT_SMALL, "BMP"));
     addField(new ResourceRef(buffer, offset + 52, CRE_PORTRAIT_LARGE, "BMP"));
     addField(new DecNumber(buffer, offset + 60, 1, CRE_REPUTATION));
-    addField(new Unknown(buffer, offset + 61, 1));
+    addField(new DecNumber(buffer, offset + 61, 1, CRE_HIDE_IN_SHADOWS));
     addField(new DecNumber(buffer, offset + 62, 2, CRE_ARMOR_CLASS));
     addField(new DecNumber(buffer, offset + 64, 2, CRE_AC_MOD_BLUDGEONING));
     addField(new DecNumber(buffer, offset + 66, 2, CRE_AC_MOD_MISSILE));
@@ -1090,7 +1100,8 @@ public final class CreResource extends AbstractStruct
 
     addField(new ResourceRef(buffer, offset + 420, CRE_SCRIPT_TEAM, "BCS"));
     addField(new ResourceRef(buffer, offset + 428, CRE_SCRIPT_SPECIAL_1, "BCS"));
-    addField(new Unknown(buffer, offset + 436, 4));
+    addField(new DecNumber(buffer, offset + 436, 2, CRE_ENCHANTMENT_LEVEL));
+    addField(new Unknown(buffer, offset + 438, 2));
     addField(new Flag(buffer, offset + 440, 4, CRE_FEATS_1, s_feats1));
     addField(new Flag(buffer, offset + 444, 4, CRE_FEATS_2, s_feats2));
     addField(new Flag(buffer, offset + 448, 4, CRE_FEATS_3, s_feats3));
@@ -1158,20 +1169,20 @@ public final class CreResource extends AbstractStruct
     addField(new DecNumber(buffer, offset + 614, 2, CRE_MORALE_RECOVERY));
     addField(new KitIdsBitmap(buffer, offset + 616, CRE_KIT));
     addField(new ResourceRef(buffer, offset + 620, CRE_SCRIPT_OVERRIDE, "BCS"));
-    addField(new ResourceRef(buffer, offset + 628, CRE_SCRIPT_SPECIAL_2, new String[]{"BCS", "BS"}));
+    addField(new ResourceRef(buffer, offset + 628, CRE_SCRIPT_SPECIAL_2, "BCS", "BS"));
     addField(new ResourceRef(buffer, offset + 636, CRE_SCRIPT_COMBAT, "BCS"));
     addField(new ResourceRef(buffer, offset + 644, CRE_SCRIPT_SPECIAL_3, "BCS"));
     addField(new ResourceRef(buffer, offset + 652, CRE_SCRIPT_MOVEMENT, "BCS"));
     addField(new Bitmap(buffer, offset + 660, 1, CRE_DEFAULT_VISIBILITY, s_visible));
-    addField(new Bitmap(buffer, offset + 661, 1, CRE_SET_EXTRA_DEATH_VAR, s_noyes));
-    addField(new Bitmap(buffer, offset + 662, 1, CRE_INCREMENT_KILL_COUNT, s_noyes));
+    addField(new Bitmap(buffer, offset + 661, 1, CRE_SET_EXTRA_DEATH_VAR, OPTION_NOYES));
+    addField(new Bitmap(buffer, offset + 662, 1, CRE_INCREMENT_KILL_COUNT, OPTION_NOYES));
     addField(new Unknown(buffer, offset + 663, 1));
     for (int i = 0; i < 5; i++) {
       addField(new DecNumber(buffer, offset + 664 + (i * 2), 2, String.format(CRE_INTERNAL_FMT, i+1)));
     }
     addField(new TextString(buffer, offset + 674, 32, CRE_DEATH_VAR_SET));
     addField(new TextString(buffer, offset + 706, 32, CRE_DEATH_VAR_INC));
-    addField(new Bitmap(buffer, offset + 738, 2, CRE_LOCATION_SAVED, s_noyes));
+    addField(new Bitmap(buffer, offset + 738, 2, CRE_LOCATION_SAVED, OPTION_NOYES));
     addField(new DecNumber(buffer, offset + 740, 2, CRE_SAVED_LOCATION_X));
     addField(new DecNumber(buffer, offset + 742, 2, CRE_SAVED_LOCATION_Y));
     addField(new DecNumber(buffer, offset + 744, 2, CRE_SAVED_ORIENTATION));
@@ -1202,7 +1213,7 @@ public final class CreResource extends AbstractStruct
     // Bard spells
     for (int i = 0; i < 9; i++) {
       SectionOffset s_off = new SectionOffset(buffer, offset + 946 + (i * 4),
-                                              String.format(CRE_OFFSET_SPELLS_BARD_FMT, i+1), null);
+                                              String.format(CRE_OFFSET_SPELLS_BARD_FMT, i+1), Iwd2Spell.class);
       DecNumber s_count = new DecNumber(buffer, offset + 1198 + (i * 4), 4,
                                         String.format(CRE_NUM_SPELLS_BARD_FMT, i+1));
       addField(s_off);
@@ -1215,7 +1226,7 @@ public final class CreResource extends AbstractStruct
     // Cleric spells
     for (int i = 0; i < 9; i++) {
       SectionOffset s_off = new SectionOffset(buffer, offset + 982 + (i * 4),
-                                              String.format(CRE_OFFSET_SPELLS_CLERIC_FMT, i+1), null);
+                                              String.format(CRE_OFFSET_SPELLS_CLERIC_FMT, i+1), Iwd2Spell.class);
       DecNumber s_count = new DecNumber(buffer, offset + 1234 + (i * 4), 4,
                                         String.format(CRE_NUM_SPELLS_CLERIC_FMT, i+1));
       addField(s_off);
@@ -1228,7 +1239,7 @@ public final class CreResource extends AbstractStruct
     // Druid spells
     for (int i = 0; i < 9; i++) {
       SectionOffset s_off = new SectionOffset(buffer, offset + 1018 + (i * 4),
-                                              String.format(CRE_OFFSET_SPELLS_DRUID_FMT, i+1), null);
+                                              String.format(CRE_OFFSET_SPELLS_DRUID_FMT, i+1), Iwd2Spell.class);
       DecNumber s_count = new DecNumber(buffer, offset + 1270 + (i * 4), 4,
                                         String.format(CRE_NUM_SPELLS_DRUID_FMT, i+1));
       addField(s_off);
@@ -1241,7 +1252,7 @@ public final class CreResource extends AbstractStruct
     // Paladin spells
     for (int i = 0; i < 9; i++) {
       SectionOffset s_off = new SectionOffset(buffer, offset + 1054 + (i * 4),
-                                              String.format(CRE_OFFSET_SPELLS_PALADIN_FMT, i+1), null);
+                                              String.format(CRE_OFFSET_SPELLS_PALADIN_FMT, i+1), Iwd2Spell.class);
       DecNumber s_count = new DecNumber(buffer, offset + 1306 + (i * 4), 4,
                                         String.format(CRE_NUM_SPELLS_PALADIN_FMT, i+1));
       addField(s_off);
@@ -1254,7 +1265,7 @@ public final class CreResource extends AbstractStruct
     // Ranger spells
     for (int i = 0; i < 9; i++) {
       SectionOffset s_off = new SectionOffset(buffer, offset + 1090 + (i * 4),
-                                              String.format(CRE_OFFSET_SPELLS_RANGER_FMT, i+1), null);
+                                              String.format(CRE_OFFSET_SPELLS_RANGER_FMT, i+1), Iwd2Spell.class);
       DecNumber s_count = new DecNumber(buffer, offset + 1342 + (i * 4), 4,
                                         String.format(CRE_NUM_SPELLS_RANGER_FMT, i+1));
       addField(s_off);
@@ -1267,7 +1278,7 @@ public final class CreResource extends AbstractStruct
     // Sorcerer spells
     for (int i = 0; i < 9; i++) {
       SectionOffset s_off = new SectionOffset(buffer, offset + 1126 + (i * 4),
-                                              String.format(CRE_OFFSET_SPELLS_SORCERER_FMT, i+1), null);
+                                              String.format(CRE_OFFSET_SPELLS_SORCERER_FMT, i+1), Iwd2Spell.class);
       DecNumber s_count = new DecNumber(buffer, offset + 1378 + (i * 4), 4,
                                         String.format(CRE_NUM_SPELLS_SORCERER_FMT, i+1));
       addField(s_off);
@@ -1280,7 +1291,7 @@ public final class CreResource extends AbstractStruct
     // Wizard spells
     for (int i = 0; i < 9; i++) {
       SectionOffset s_off = new SectionOffset(buffer, offset + 1162 + (i * 4),
-                                              String.format(CRE_OFFSET_SPELLS_WIZARD_FMT, i+1), null);
+                                              String.format(CRE_OFFSET_SPELLS_WIZARD_FMT, i+1), Iwd2Spell.class);
       DecNumber s_count = new DecNumber(buffer, offset + 1414 + (i * 4), 4,
                                         String.format(CRE_NUM_SPELLS_WIZARD_FMT, i+1));
       addField(s_off);
@@ -1293,7 +1304,7 @@ public final class CreResource extends AbstractStruct
     // Domain spells
     for (int i = 0; i < 9; i++) {
       SectionOffset s_off = new SectionOffset(buffer, offset + 1450 + (i * 4),
-                                              String.format(CRE_OFFSET_SPELLS_DOMAIN_FMT, i+1), null);
+                                              String.format(CRE_OFFSET_SPELLS_DOMAIN_FMT, i+1), Iwd2Spell.class);
       DecNumber s_count = new DecNumber(buffer, offset + 1486 + (i * 4), 4,
                                         String.format(CRE_NUM_SPELLS_DOMAIN_FMT, i+1));
       addField(s_off);
@@ -1304,7 +1315,7 @@ public final class CreResource extends AbstractStruct
     }
 
     // Innate abilities
-    SectionOffset inn_off = new SectionOffset(buffer, offset + 1522, CRE_OFFSET_ABILITIES, null);
+    SectionOffset inn_off = new SectionOffset(buffer, offset + 1522, CRE_OFFSET_ABILITIES, Iwd2Ability.class);
     DecNumber inn_num = new DecNumber(buffer, offset + 1526, 4, CRE_NUM_ABILITIES);
     addField(inn_off);
     addField(inn_num);
@@ -1313,7 +1324,7 @@ public final class CreResource extends AbstractStruct
     addField(inn_str);
 
     // Songs
-    SectionOffset song_off = new SectionOffset(buffer, offset + 1530, CRE_OFFSET_SONGS, null);
+    SectionOffset song_off = new SectionOffset(buffer, offset + 1530, CRE_OFFSET_SONGS, Iwd2Song.class);
     DecNumber song_num = new DecNumber(buffer, offset + 1534, 4, CRE_NUM_SONGS);
     addField(song_off);
     addField(song_num);
@@ -1322,7 +1333,7 @@ public final class CreResource extends AbstractStruct
     addField(song_str);
 
     // Shapes
-    SectionOffset shape_off = new SectionOffset(buffer, offset + 1538, CRE_OFFSET_SHAPES, null);
+    SectionOffset shape_off = new SectionOffset(buffer, offset + 1538, CRE_OFFSET_SHAPES, Iwd2Shape.class);
     DecNumber shape_num = new DecNumber(buffer, offset + 1542, 4, CRE_NUM_SHAPES);
     addField(shape_off);
     addField(shape_num);
@@ -1330,7 +1341,7 @@ public final class CreResource extends AbstractStruct
                                               shape_num, CRE_SHAPES, Iwd2Struct.TYPE_SHAPE);
     addField(shape_str);
 
-    SectionOffset itemslots_offset = new SectionOffset(buffer, offset + 1546, CRE_OFFSET_ITEM_SLOTS, null);
+    SectionOffset itemslots_offset = new SectionOffset(buffer, offset + 1546, CRE_OFFSET_ITEM_SLOTS, IndexNumber.class);
     addField(itemslots_offset);
     SectionOffset items_offset = new SectionOffset(buffer, offset + 1550, CRE_OFFSET_ITEMS,
                                                    Item.class);
@@ -1375,37 +1386,36 @@ public final class CreResource extends AbstractStruct
     }
 
     offset = getExtraOffset() + itemslots_offset.getValue();
-    addField(new DecNumber(buffer, offset, 2, CRE_ITEM_SLOT_HELMET));
-    addField(new DecNumber(buffer, offset + 2, 2, CRE_ITEM_SLOT_ARMOR));
-    addField(new DecNumber(buffer, offset + 4, 2, CRE_ITEM_SLOT_SHIELD));
-    addField(new DecNumber(buffer, offset + 6, 2, CRE_ITEM_SLOT_GAUNTLETS));
-    addField(new DecNumber(buffer, offset + 8, 2, CRE_ITEM_SLOT_LEFT_RING));
-    addField(new DecNumber(buffer, offset + 10, 2, CRE_ITEM_SLOT_RIGHT_RING));
-    addField(new DecNumber(buffer, offset + 12, 2, CRE_ITEM_SLOT_AMULET));
-    addField(new DecNumber(buffer, offset + 14, 2, CRE_ITEM_SLOT_BELT));
-    addField(new DecNumber(buffer, offset + 16, 2, CRE_ITEM_SLOT_BOOTS));
+    addField(new IndexNumber(buffer, offset, 2, CRE_ITEM_SLOT_HELMET));
+    addField(new IndexNumber(buffer, offset + 2, 2, CRE_ITEM_SLOT_ARMOR));
+    addField(new IndexNumber(buffer, offset + 4, 2, CRE_ITEM_SLOT_SHIELD));
+    addField(new IndexNumber(buffer, offset + 6, 2, CRE_ITEM_SLOT_GAUNTLETS));
+    addField(new IndexNumber(buffer, offset + 8, 2, CRE_ITEM_SLOT_LEFT_RING));
+    addField(new IndexNumber(buffer, offset + 10, 2, CRE_ITEM_SLOT_RIGHT_RING));
+    addField(new IndexNumber(buffer, offset + 12, 2, CRE_ITEM_SLOT_AMULET));
+    addField(new IndexNumber(buffer, offset + 14, 2, CRE_ITEM_SLOT_BELT));
+    addField(new IndexNumber(buffer, offset + 16, 2, CRE_ITEM_SLOT_BOOTS));
     for (int i = 0; i < 4; i++) {
-      addField(new DecNumber(buffer, offset + 18 + (i * 4), 2, String.format(CRE_ITEM_SLOT_WEAPON_FMT, i+1)));
-      addField(new DecNumber(buffer, offset + 20 + (i * 4), 2, String.format(CRE_ITEM_SLOT_SHIELD_FMT, i+1)));
+      addField(new IndexNumber(buffer, offset + 18 + (i * 4), 2, String.format(CRE_ITEM_SLOT_WEAPON_FMT, i+1)));
+      addField(new IndexNumber(buffer, offset + 20 + (i * 4), 2, String.format(CRE_ITEM_SLOT_SHIELD_FMT, i+1)));
     }
     for (int i = 0; i < 4; i++) {
-      addField(new DecNumber(buffer, offset + 34 + (i * 2), 2, String.format(CRE_ITEM_SLOT_QUIVER_FMT, i+1)));
+      addField(new IndexNumber(buffer, offset + 34 + (i * 2), 2, String.format(CRE_ITEM_SLOT_QUIVER_FMT, i+1)));
     }
-    addField(new DecNumber(buffer, offset + 42, 2, CRE_ITEM_SLOT_CLOAK));
+    addField(new IndexNumber(buffer, offset + 42, 2, CRE_ITEM_SLOT_CLOAK));
     for (int i = 0; i < 3; i++) {
-      addField(new DecNumber(buffer, offset + 44 + (i * 2), 2, String.format(CRE_ITEM_SLOT_QUICK_FMT, i+1)));
+      addField(new IndexNumber(buffer, offset + 44 + (i * 2), 2, String.format(CRE_ITEM_SLOT_QUICK_FMT, i+1)));
     }
     for (int i = 0; i < 24; i++) {
-      addField(new DecNumber(buffer, offset + 50 + (i * 2), 2,
-                             String.format(CRE_ITEM_SLOT_INVENTORY_FMT, i+1)));
+      addField(new IndexNumber(buffer, offset + 50 + (i * 2), 2,
+                               String.format(CRE_ITEM_SLOT_INVENTORY_FMT, i+1)));
     }
-    addField(new DecNumber(buffer, offset + 98, 2, CRE_ITEM_SLOT_MAGIC_WEAPON));
-    addField(new DecNumber(buffer, offset + 100, 2, CRE_SELECTED_WEAPON_SLOT));
-    addField(new DecNumber(buffer, offset + 102, 2, CRE_SELECTED_WEAPON_ABILITY));
+    addField(new IndexNumber(buffer, offset + 98, 2, CRE_ITEM_SLOT_MAGIC_WEAPON));
+    addField(new IndexNumber(buffer, offset + 100, 2, CRE_SELECTED_WEAPON_SLOT));
+    addField(new IndexNumber(buffer, offset + 102, 2, CRE_SELECTED_WEAPON_ABILITY));
 
     int endoffset = offset;
-    for (int i = 0; i < getFieldCount(); i++) {
-      StructEntry entry = getField(i);
+    for (final StructEntry entry : getFields()) {
       if (entry.getOffset() + entry.getSize() > endoffset) {
         endoffset = entry.getOffset() + entry.getSize();
       }
@@ -1425,18 +1435,27 @@ public final class CreResource extends AbstractStruct
     addField(new DecNumber(buffer, offset + 12, 4, CRE_XP_VALUE));
     addField(new DecNumber(buffer, offset + 16, 4, CRE_XP));
     addField(new DecNumber(buffer, offset + 20, 4, CRE_GOLD));
-    addField(new IdsFlag(buffer, offset + 24, 4, CRE_STATUS, "STATE.IDS"));
+    addField(uniqueIdsFlag(new IdsFlag(buffer, offset + 24, 4, CRE_STATUS, "STATE.IDS"), "STATE.IDS", '_'));
     addField(new DecNumber(buffer, offset + 28, 2, CRE_HP_CURRENT));
     addField(new DecNumber(buffer, offset + 30, 2, CRE_HP_MAX));
-    addField(new AnimateBitmap(buffer, offset + 32, 4, CRE_ANIMATION, "ANIMATE.IDS"));
-    addField(new ColorValue(buffer, offset + 36, 1, CRE_COLOR_METAL));
-    addField(new ColorValue(buffer, offset + 37, 1, CRE_COLOR_MINOR));
-    addField(new ColorValue(buffer, offset + 38, 1, CRE_COLOR_MAJOR));
-    addField(new ColorValue(buffer, offset + 39, 1, CRE_COLOR_SKIN));
-    addField(new ColorValue(buffer, offset + 40, 1, CRE_COLOR_LEATHER));
-    addField(new ColorValue(buffer, offset + 41, 1, CRE_COLOR_ARMOR));
-    addField(new ColorValue(buffer, offset + 42, 1, CRE_COLOR_HAIR));
-    Bitmap effect_version = (Bitmap)addField(new Bitmap(buffer, offset + 43, 1, CRE_EFFECT_VERSION, s_effversion));
+    final AnimateBitmap animate = new AnimateBitmap(buffer, offset + 32, 4, CRE_ANIMATION);
+    if (Profile.getGame() == Profile.Game.PSTEE && version.equals("V1.0")) {
+      // TODO: resolve issues with Listener queue filled with duplicate entries on each "Update" button click
+//      animate.addUpdateListener(this);
+    }
+    addField(animate);
+    if (Profile.getGame() == Profile.Game.PSTEE && version.equals("V1.0")) {
+      setColorFieldsPSTEE(animate.getValue(), buffer, offset + 36, false);
+    } else {
+      addField(new ColorValue(buffer, offset + 36, 1, CRE_COLOR_METAL));
+      addField(new ColorValue(buffer, offset + 37, 1, CRE_COLOR_MINOR));
+      addField(new ColorValue(buffer, offset + 38, 1, CRE_COLOR_MAJOR));
+      addField(new ColorValue(buffer, offset + 39, 1, CRE_COLOR_SKIN));
+      addField(new ColorValue(buffer, offset + 40, 1, CRE_COLOR_LEATHER));
+      addField(new ColorValue(buffer, offset + 41, 1, CRE_COLOR_ARMOR));
+      addField(new ColorValue(buffer, offset + 42, 1, CRE_COLOR_HAIR));
+    }
+    Bitmap effect_version = addField(new Bitmap(buffer, offset + 43, 1, CRE_EFFECT_VERSION, s_effversion));
     addField(new ResourceRef(buffer, offset + 44, CRE_PORTRAIT_SMALL, "BMP"));
     if (version.equalsIgnoreCase("V1.2") || version.equalsIgnoreCase("V1.1")) {
       addField(new ResourceRef(buffer, offset + 52, CRE_PORTRAIT_LARGE, "BAM"));
@@ -1502,11 +1521,16 @@ public final class CreResource extends AbstractStruct
         } else {
           addField(new Unknown(buffer, offset + 110, 7));
         }
-        addField(new Bitmap(buffer, offset + 117, 1, CRE_NIGHTMARE_MODE, s_noyes));
+        addField(new Bitmap(buffer, offset + 117, 1, CRE_NIGHTMARE_MODE, OPTION_NOYES));
         addField(new UnsignDecNumber(buffer, offset + 118, 1, CRE_TRANSLUCENCY));
-        addField(new DecNumber(buffer, offset + 119, 1, CRE_REPUTATION_MOD_KILLED));
-        addField(new DecNumber(buffer, offset + 120, 1, CRE_REPUTATION_MOD_JOIN));
-        addField(new DecNumber(buffer, offset + 121, 1, CRE_REPUTATION_MOD_LEAVE));
+        if (Profile.getGame() == Profile.Game.PSTEE) {
+          addField(new DecNumber(buffer, offset + 119, 1, CRE_MURDER_INC));
+          addField(new Unknown(buffer, offset + 120, 2));
+        } else {
+          addField(new DecNumber(buffer, offset + 119, 1, CRE_REPUTATION_MOD_KILLED));
+          addField(new DecNumber(buffer, offset + 120, 1, CRE_REPUTATION_MOD_JOIN));
+          addField(new DecNumber(buffer, offset + 121, 1, CRE_REPUTATION_MOD_LEAVE));
+        }
       } else {
         addField(new Unknown(buffer, offset + 110, 12));
       }
@@ -1520,7 +1544,7 @@ public final class CreResource extends AbstractStruct
       addField(new MultiNumber(buffer, offset + 107, 1, CRE_PROFICIENCY_BOW, 3, 2, s_profLabels));
       addField(new Unknown(buffer, offset + 108, 14));
     }
-    else if (version.equalsIgnoreCase("V9.0")) {
+    else if (version.equalsIgnoreCase("V9.0") || version.equalsIgnoreCase("V9.1")) {
       addField(new MultiNumber(buffer, offset + 102, 1, CRE_PROFICIENCY_LARGE_SWORD, 3, 2, s_profLabels));
       addField(new MultiNumber(buffer, offset + 103, 1, CRE_PROFICIENCY_SMALL_SWORD, 3, 2, s_profLabels));
       addField(new MultiNumber(buffer, offset + 104, 1, CRE_PROFICIENCY_BOW, 3, 2, s_profLabels));
@@ -1542,7 +1566,7 @@ public final class CreResource extends AbstractStruct
       clearFields();
       throw new Exception("Unsupported version: " + version);
     }
-    addField(new DecNumber(buffer, offset + 122, 1, CRE_UNDEAD_LEVEL));
+    addField(new DecNumber(buffer, offset + 122, 1, CRE_TURN_UNDEAD_LEVEL));
     addField(new DecNumber(buffer, offset + 123, 1, CRE_TRACKING));
     if (Profile.getGame() == Profile.Game.PSTEE) {
       addField(new DecNumber(buffer, offset + 124, 4, CRE_XP_SECOND_CLASS));
@@ -1595,7 +1619,8 @@ public final class CreResource extends AbstractStruct
     addField(new DecNumber(buffer, offset + 568, 1, CRE_MORALE_BREAK));
     addField(new IdsBitmap(buffer, offset + 569, 1, CRE_RACIAL_ENEMY, "RACE.IDS"));
     addField(new DecNumber(buffer, offset + 570, 2, CRE_MORALE_RECOVERY));
-    if (ResourceFactory.resourceExists("KIT.IDS")) {
+    if (Profile.getGame() != Profile.Game.PSTEE &&
+        ResourceFactory.resourceExists("KIT.IDS")) {
       addField(new KitIdsBitmap(buffer, offset + 572, CRE_KIT));
     }
     else {
@@ -1613,7 +1638,7 @@ public final class CreResource extends AbstractStruct
       }
     }
     addField(new ResourceRef(buffer, offset + 576, CRE_SCRIPT_OVERRIDE, "BCS"));
-    addField(new ResourceRef(buffer, offset + 584, CRE_SCRIPT_CLASS, new String[]{"BCS", "BS"}));
+    addField(new ResourceRef(buffer, offset + 584, CRE_SCRIPT_CLASS, "BCS", "BS"));
     addField(new ResourceRef(buffer, offset + 592, CRE_SCRIPT_RACE, "BCS"));
     addField(new ResourceRef(buffer, offset + 600, CRE_SCRIPT_GENERAL, "BCS"));
     addField(new ResourceRef(buffer, offset + 608, CRE_SCRIPT_DEFAULT, "BCS"));
@@ -1645,8 +1670,10 @@ public final class CreResource extends AbstractStruct
       addField(new DecNumber(buffer, offset + 727, 1, CRE_NUM_COLORS));
       addField(new Flag(buffer, offset + 728, 4, CRE_ATTRIBUTES, s_attributes_pst));
       for (int i = 0; i < 7; i++) {
-        addField(new IdsBitmap(buffer, offset + 732 + (i * 2), 2,
-                               String.format(CRE_COLOR_FMT, i+1), "CLOWNCLR.IDS"));
+        addField(new ColorValue(buffer, offset + 732 + (i * 2), 2, String.format(CRE_COLOR_FMT, i+1),
+                                "PAL32.BMP"));
+//        addField(new IdsBitmap(buffer, offset + 732 + (i * 2), 2,
+//                               String.format(CRE_COLOR_FMT, i+1), "CLOWNCLR.IDS"));
       }
       addField(new Unknown(buffer, offset + 746, 3));
       for (int i = 0; i < 7; i++) {
@@ -1659,17 +1686,17 @@ public final class CreResource extends AbstractStruct
       addField(new IdsBitmap(buffer, offset + 779, 1, CRE_FACTION, "FACTION.IDS"));
       offset += 164;
     }
-    else if (version.equalsIgnoreCase("V9.0")) {
+    else if (version.equalsIgnoreCase("V9.0") || version.equalsIgnoreCase("V9.1")) {
       addField(new Bitmap(buffer, offset + 616, 1, CRE_DEFAULT_VISIBILITY, s_visible));
-      addField(new Bitmap(buffer, offset + 617, 1, CRE_SET_EXTRA_DEATH_VAR, s_noyes));
-      addField(new Bitmap(buffer, offset + 618, 1, CRE_INCREMENT_KILL_COUNT, s_noyes));
+      addField(new Bitmap(buffer, offset + 617, 1, CRE_SET_EXTRA_DEATH_VAR, OPTION_NOYES));
+      addField(new Bitmap(buffer, offset + 618, 1, CRE_INCREMENT_KILL_COUNT, OPTION_NOYES));
       addField(new Unknown(buffer, offset + 619, 1));
       for (int i = 0; i < 5; i++) {
         addField(new DecNumber(buffer, offset + 620 + (i * 2), 2, String.format(CRE_INTERNAL_FMT, i+1)));
       }
       addField(new TextString(buffer, offset + 630, 32, CRE_DEATH_VAR_SET));
       addField(new TextString(buffer, offset + 662, 32, CRE_DEATH_VAR_INC));
-      addField(new Bitmap(buffer, offset + 694, 2, CRE_LOCATION_SAVED, s_noyes));
+      addField(new Bitmap(buffer, offset + 694, 2, CRE_LOCATION_SAVED, OPTION_NOYES));
       addField(new DecNumber(buffer, offset + 696, 2, CRE_SAVED_LOCATION_X));
       addField(new DecNumber(buffer, offset + 698, 2, CRE_SAVED_LOCATION_Y));
       addField(new DecNumber(buffer, offset + 700, 2, CRE_SAVED_ORIENTATION));
@@ -1708,7 +1735,7 @@ public final class CreResource extends AbstractStruct
     SectionCount countMemSpells = new SectionCount(buffer, offset + 684, 4, CRE_NUM_MEMORIZED_SPELLS,
                                                    MemorizedSpells.class);
     addField(countMemSpells);
-    SectionOffset offsetItemslots = new SectionOffset(buffer, offset + 688, CRE_OFFSET_ITEM_SLOTS, null);
+    SectionOffset offsetItemslots = new SectionOffset(buffer, offset + 688, CRE_OFFSET_ITEM_SLOTS, IndexNumber.class);
     addField(offsetItemslots);
     SectionOffset offsetItems = new SectionOffset(buffer, offset + 692, CRE_OFFSET_ITEMS, Item.class);
     addField(offsetItems);
@@ -1768,88 +1795,88 @@ public final class CreResource extends AbstractStruct
     offset = getExtraOffset() + offsetItemslots.getValue();
     int slotCount = 0;
     if (version.equalsIgnoreCase("V1.2")) {
-      addField(new DecNumber(buffer, offset, 2, CRE_ITEM_SLOT_RIGHT_EARRING));
-      addField(new DecNumber(buffer, offset + 2, 2, CRE_ITEM_SLOT_CHEST));
-      addField(new DecNumber(buffer, offset + 4, 2, CRE_ITEM_SLOT_LEFT_TATTOO));
-      addField(new DecNumber(buffer, offset + 6, 2, CRE_ITEM_SLOT_HAND));
-      addField(new DecNumber(buffer, offset + 8, 2, CRE_ITEM_SLOT_LEFT_RING));
-      addField(new DecNumber(buffer, offset + 10, 2, CRE_ITEM_SLOT_RIGHT_RING));
-      addField(new DecNumber(buffer, offset + 12, 2, CRE_ITEM_SLOT_LEFT_EARRING));
-      addField(new DecNumber(buffer, offset + 14, 2, CRE_ITEM_SLOT_RIGHT_TATTOO_LOWER));
-      addField(new DecNumber(buffer, offset + 16, 2, CRE_ITEM_SLOT_WRIST));
+      addField(new IndexNumber(buffer, offset, 2, CRE_ITEM_SLOT_RIGHT_EARRING));
+      addField(new IndexNumber(buffer, offset + 2, 2, CRE_ITEM_SLOT_CHEST));
+      addField(new IndexNumber(buffer, offset + 4, 2, CRE_ITEM_SLOT_LEFT_TATTOO));
+      addField(new IndexNumber(buffer, offset + 6, 2, CRE_ITEM_SLOT_HAND));
+      addField(new IndexNumber(buffer, offset + 8, 2, CRE_ITEM_SLOT_LEFT_RING));
+      addField(new IndexNumber(buffer, offset + 10, 2, CRE_ITEM_SLOT_RIGHT_RING));
+      addField(new IndexNumber(buffer, offset + 12, 2, CRE_ITEM_SLOT_LEFT_EARRING));
+      addField(new IndexNumber(buffer, offset + 14, 2, CRE_ITEM_SLOT_RIGHT_TATTOO_LOWER));
+      addField(new IndexNumber(buffer, offset + 16, 2, CRE_ITEM_SLOT_WRIST));
       slotCount += 9;
       for (int i = 0; i < 4; i++) {
-        addField(new DecNumber(buffer, offset + 18 + (i * 2), 2,
-                               String.format(CRE_ITEM_SLOT_WEAPON_FMT, i+1)));
+        addField(new IndexNumber(buffer, offset + 18 + (i * 2), 2,
+                                 String.format(CRE_ITEM_SLOT_WEAPON_FMT, i+1)));
       }
       slotCount += 4;
       for (int i = 0; i < 6; i++) {
-        addField(new DecNumber(buffer, offset + 26 + (i * 2), 2, String.format(CRE_ITEM_SLOT_QUIVER_FMT, i+1)));
+        addField(new IndexNumber(buffer, offset + 26 + (i * 2), 2, String.format(CRE_ITEM_SLOT_QUIVER_FMT, i+1)));
       }
-      addField(new DecNumber(buffer, offset + 38, 2, CRE_ITEM_SLOT_RIGHT_TATTOO_UPPER));
+      addField(new IndexNumber(buffer, offset + 38, 2, CRE_ITEM_SLOT_RIGHT_TATTOO_UPPER));
       slotCount += 7;
       for (int i = 0; i < 5; i++) {
-        addField(new DecNumber(buffer, offset + 40 + (i * 2), 2, String.format(CRE_ITEM_SLOT_QUICK_FMT, i+1)));
+        addField(new IndexNumber(buffer, offset + 40 + (i * 2), 2, String.format(CRE_ITEM_SLOT_QUICK_FMT, i+1)));
       }
       slotCount += 5;
       for (int i = 0; i < 20; i++) {
-        addField(new DecNumber(buffer, offset + 50 + (i * 2), 2, String.format(CRE_ITEM_SLOT_INVENTORY_FMT, i+1)));
+        addField(new IndexNumber(buffer, offset + 50 + (i * 2), 2, String.format(CRE_ITEM_SLOT_INVENTORY_FMT, i+1)));
       }
       slotCount += 20;
-      addField(new DecNumber(buffer, offset + 90, 2, CRE_ITEM_SLOT_MAGIC_WEAPON));
-      addField(new DecNumber(buffer, offset + 92, 2, CRE_SELECTED_WEAPON_SLOT));
-      addField(new DecNumber(buffer, offset + 94, 2, CRE_SELECTED_WEAPON_ABILITY));
+      addField(new IndexNumber(buffer, offset + 90, 2, CRE_ITEM_SLOT_MAGIC_WEAPON));
+      addField(new IndexNumber(buffer, offset + 92, 2, CRE_SELECTED_WEAPON_SLOT));
+      addField(new IndexNumber(buffer, offset + 94, 2, CRE_SELECTED_WEAPON_ABILITY));
       slotCount += 3;
     }
     else {
       if (Profile.getGame() == Profile.Game.PSTEE) {
         // REMEMBER: ITMSLOTS.2DA can be used as reference for item slot layout
-        addField(new DecNumber(buffer, offset, 2, CRE_ITEM_SLOT_LEFT_EARRING));
-        addField(new DecNumber(buffer, offset + 2, 2, CRE_ITEM_SLOT_CHEST));
-        addField(new DecNumber(buffer, offset + 4, 2, CRE_ITEM_SLOT_RIGHT_TATTOO_LOWER));
-        addField(new DecNumber(buffer, offset + 6, 2, CRE_ITEM_SLOT_HAND));
-        addField(new DecNumber(buffer, offset + 8, 2, CRE_ITEM_SLOT_RIGHT_RING));
-        addField(new DecNumber(buffer, offset + 10, 2, CRE_ITEM_SLOT_LEFT_RING));
-        addField(new DecNumber(buffer, offset + 12, 2, CRE_ITEM_SLOT_RIGHT_EARRING));
-        addField(new DecNumber(buffer, offset + 14, 2, CRE_ITEM_SLOT_LEFT_TATTOO));
-        addField(new DecNumber(buffer, offset + 16, 2, CRE_ITEM_SLOT_WRIST));
+        addField(new IndexNumber(buffer, offset, 2, CRE_ITEM_SLOT_LEFT_EARRING));
+        addField(new IndexNumber(buffer, offset + 2, 2, CRE_ITEM_SLOT_CHEST));
+        addField(new IndexNumber(buffer, offset + 4, 2, CRE_ITEM_SLOT_RIGHT_TATTOO_LOWER));
+        addField(new IndexNumber(buffer, offset + 6, 2, CRE_ITEM_SLOT_HAND));
+        addField(new IndexNumber(buffer, offset + 8, 2, CRE_ITEM_SLOT_RIGHT_RING));
+        addField(new IndexNumber(buffer, offset + 10, 2, CRE_ITEM_SLOT_LEFT_RING));
+        addField(new IndexNumber(buffer, offset + 12, 2, CRE_ITEM_SLOT_RIGHT_EARRING));
+        addField(new IndexNumber(buffer, offset + 14, 2, CRE_ITEM_SLOT_LEFT_TATTOO));
+        addField(new IndexNumber(buffer, offset + 16, 2, CRE_ITEM_SLOT_WRIST));
         slotCount += 9;
       } else {
-        addField(new DecNumber(buffer, offset, 2, CRE_ITEM_SLOT_HELMET));
-        addField(new DecNumber(buffer, offset + 2, 2, CRE_ITEM_SLOT_ARMOR));
-        addField(new DecNumber(buffer, offset + 4, 2, CRE_ITEM_SLOT_SHIELD));
-        addField(new DecNumber(buffer, offset + 6, 2, CRE_ITEM_SLOT_GLOVES));
-        addField(new DecNumber(buffer, offset + 8, 2, CRE_ITEM_SLOT_LEFT_RING));
-        addField(new DecNumber(buffer, offset + 10, 2, CRE_ITEM_SLOT_RIGHT_RING));
-        addField(new DecNumber(buffer, offset + 12, 2, CRE_ITEM_SLOT_AMULET));
-        addField(new DecNumber(buffer, offset + 14, 2, CRE_ITEM_SLOT_BELT));
-        addField(new DecNumber(buffer, offset + 16, 2, CRE_ITEM_SLOT_BOOTS));
+        addField(new IndexNumber(buffer, offset, 2, CRE_ITEM_SLOT_HELMET));
+        addField(new IndexNumber(buffer, offset + 2, 2, CRE_ITEM_SLOT_ARMOR));
+        addField(new IndexNumber(buffer, offset + 4, 2, CRE_ITEM_SLOT_SHIELD));
+        addField(new IndexNumber(buffer, offset + 6, 2, CRE_ITEM_SLOT_GLOVES));
+        addField(new IndexNumber(buffer, offset + 8, 2, CRE_ITEM_SLOT_LEFT_RING));
+        addField(new IndexNumber(buffer, offset + 10, 2, CRE_ITEM_SLOT_RIGHT_RING));
+        addField(new IndexNumber(buffer, offset + 12, 2, CRE_ITEM_SLOT_AMULET));
+        addField(new IndexNumber(buffer, offset + 14, 2, CRE_ITEM_SLOT_BELT));
+        addField(new IndexNumber(buffer, offset + 16, 2, CRE_ITEM_SLOT_BOOTS));
         slotCount += 9;
       }
       for (int i = 0; i < 4; i++) {
-        addField(new DecNumber(buffer, offset + 18 + (i * 2), 2, String.format(CRE_ITEM_SLOT_WEAPON_FMT, i+1)));
+        addField(new IndexNumber(buffer, offset + 18 + (i * 2), 2, String.format(CRE_ITEM_SLOT_WEAPON_FMT, i+1)));
         slotCount++;
       }
       for (int i = 0; i < 4; i++) {
-        addField(new DecNumber(buffer, offset + 26 + (i * 2), 2, String.format(CRE_ITEM_SLOT_QUIVER_FMT, i+1)));
+        addField(new IndexNumber(buffer, offset + 26 + (i * 2), 2, String.format(CRE_ITEM_SLOT_QUIVER_FMT, i+1)));
         slotCount++;
       }
       if (Profile.getGame() == Profile.Game.PSTEE) {
-        addField(new DecNumber(buffer, offset + 34, 2, CRE_ITEM_SLOT_RIGHT_TATTOO_UPPER));
+        addField(new IndexNumber(buffer, offset + 34, 2, CRE_ITEM_SLOT_RIGHT_TATTOO_UPPER));
         slotCount++;
       } else {
-        addField(new DecNumber(buffer, offset + 34, 2, CRE_ITEM_SLOT_CLOAK));
+        addField(new IndexNumber(buffer, offset + 34, 2, CRE_ITEM_SLOT_CLOAK));
         slotCount++;
       }
       for (int i = 0; i < 3; i++) {
-        addField(new DecNumber(buffer, offset + 36 + (i * 2), 2, String.format(CRE_ITEM_SLOT_QUICK_FMT, i+1)));
+        addField(new IndexNumber(buffer, offset + 36 + (i * 2), 2, String.format(CRE_ITEM_SLOT_QUICK_FMT, i+1)));
         slotCount++;
       }
       for (int i = 0; i < 16; i++) {
-        addField(new DecNumber(buffer, offset + 42 + (i * 2), 2, String.format(CRE_ITEM_SLOT_INVENTORY_FMT, i+1)));
+        addField(new IndexNumber(buffer, offset + 42 + (i * 2), 2, String.format(CRE_ITEM_SLOT_INVENTORY_FMT, i+1)));
         slotCount++;
       }
-      addField(new DecNumber(buffer, offset + 74, 2, CRE_ITEM_SLOT_MAGIC_WEAPON));
+      addField(new IndexNumber(buffer, offset + 74, 2, CRE_ITEM_SLOT_MAGIC_WEAPON));
       slotCount++;
       StructEntry se = getAttribute(CRE_NUM_ITEM_SLOTS);
       int maxSlotCount = 0;
@@ -1859,36 +1886,35 @@ public final class CreResource extends AbstractStruct
       if (Profile.getGame() == Profile.Game.PSTEE && slotCount + 8 < maxSlotCount) {
         // registered characters gain additional item slots
         int idxUnused = 1;
-        addField(new DecNumber(buffer, offset + 76, 2, String.format(CRE_ITEM_SLOT_QUIVER_FMT, 5)));
-        addField(new DecNumber(buffer, offset + 78, 2, String.format(CRE_ITEM_SLOT_UNUSED_FMT, idxUnused++)));
-        addField(new DecNumber(buffer, offset + 80, 2, String.format(CRE_ITEM_SLOT_QUICK_FMT, 4)));
-        addField(new DecNumber(buffer, offset + 82, 2, String.format(CRE_ITEM_SLOT_QUICK_FMT, 5)));
+        addField(new IndexNumber(buffer, offset + 76, 2, String.format(CRE_ITEM_SLOT_QUIVER_FMT, 5)));
+        addField(new IndexNumber(buffer, offset + 78, 2, String.format(CRE_ITEM_SLOT_UNUSED_FMT, idxUnused++)));
+        addField(new IndexNumber(buffer, offset + 80, 2, String.format(CRE_ITEM_SLOT_QUICK_FMT, 4)));
+        addField(new IndexNumber(buffer, offset + 82, 2, String.format(CRE_ITEM_SLOT_QUICK_FMT, 5)));
         slotCount += 4;
         offset += 84;
         for (int i = 0; i < 4; i++) {
-          addField(new DecNumber(buffer, offset, 2, String.format(CRE_ITEM_SLOT_INVENTORY_FMT, i+17)));
+          addField(new IndexNumber(buffer, offset, 2, String.format(CRE_ITEM_SLOT_INVENTORY_FMT, i+17)));
           slotCount++;
           offset += 2;
         }
         // filling the gap with placeholder slots
         for (int i = 0, imax = maxSlotCount - slotCount - 1; i < imax; i++) {
-          addField(new DecNumber(buffer, offset, 2, String.format(CRE_ITEM_SLOT_UNUSED_FMT, idxUnused++)));
+          addField(new IndexNumber(buffer, offset, 2, String.format(CRE_ITEM_SLOT_UNUSED_FMT, idxUnused++)));
           slotCount++;
           offset += 2;
         }
-        addField(new DecNumber(buffer, offset, 2, CRE_SELECTED_WEAPON_SLOT));
+        addField(new IndexNumber(buffer, offset, 2, CRE_SELECTED_WEAPON_SLOT));
         offset += 2;
-        addField(new DecNumber(buffer, offset, 2, CRE_SELECTED_WEAPON_ABILITY));
+        addField(new IndexNumber(buffer, offset, 2, CRE_SELECTED_WEAPON_ABILITY));
         offset += 2;
       } else {
-        addField(new DecNumber(buffer, offset + 76, 2, CRE_SELECTED_WEAPON_SLOT));
-        addField(new DecNumber(buffer, offset + 78, 2, CRE_SELECTED_WEAPON_ABILITY));
+        addField(new IndexNumber(buffer, offset + 76, 2, CRE_SELECTED_WEAPON_SLOT));
+        addField(new IndexNumber(buffer, offset + 78, 2, CRE_SELECTED_WEAPON_ABILITY));
         offset += 80;
       }
     }
     int endoffset = offset;
-    for (int i = 0; i < getFieldCount(); i++) {
-      StructEntry entry = getField(i);
+    for (final StructEntry entry : getFields()) {
       if (entry.getOffset() + entry.getSize() > endoffset) {
         endoffset = entry.getOffset() + entry.getSize();
       }
@@ -1901,8 +1927,7 @@ public final class CreResource extends AbstractStruct
     // Assumes memorized spells offset is correct
     int offset = ((HexNumber)getAttribute(CRE_OFFSET_MEMORIZED_SPELLS)).getValue() + getExtraOffset();
     int count = 0;
-    for (int i = 0; i < getFieldCount(); i++) {
-      Object o = getField(i);
+    for (final StructEntry o : getFields()) {
       if (o instanceof SpellMemorization) {
         SpellMemorization info = (SpellMemorization)o;
         int numSpells = info.updateSpells(offset, count);
@@ -1915,7 +1940,7 @@ public final class CreResource extends AbstractStruct
 
   private void updateOffsets(AddRemovable datatype, int size)
   {
-    if (getField(0).toString().equalsIgnoreCase("CHR "))
+    if (getFields().get(0).toString().equalsIgnoreCase("CHR "))
       ((HexNumber)getAttribute(CHR_CRE_SIZE)).incValue(size);
 //    if (!(datatype instanceof MemorizedSpells)) {
 //      HexNumber offsetMemSpells = (HexNumber)getAttribute("Memorized spells offset");
@@ -1923,6 +1948,117 @@ public final class CreResource extends AbstractStruct
 //          datatype.getOffset() == offsetMemSpells.getValue() + getExtraOffset() && size > 0)
 //        offsetMemSpells.incValue(size);
 //    }
+  }
+
+
+  // Adds or updates CRE color fields, returns offset behind last color field
+  private int setColorFieldsPSTEE(int animId, ByteBuffer buffer, int startOffset, boolean update)
+  {
+    int[] colorTypes = new int[7];
+    if (animId >= 0xf000 && animId < 0x10000) {
+      // determine color types
+      IniMap iniMap = IniMapCache.get(Integer.toHexString(animId) + ".INI");
+      if (iniMap != null) {
+        IniMapSection iniSection = iniMap.getSection("monster_planescape");
+        if (iniSection != null) {
+          IniMapEntry iniEntry = iniSection.getEntry("clown");
+          boolean isClown = (iniEntry != null && Misc.toNumber(iniEntry.getValue(), 0) > 0);
+          iniEntry = null;
+          for (int i = 0; i < colorTypes.length; i++) {
+            if (isClown) {
+              iniEntry = iniSection.getEntry("color" + (i+1));
+            }
+            if (iniEntry != null) {
+              colorTypes[i] = Misc.toNumber(iniEntry.getValue(), -1) >> 4;
+            } else {
+              colorTypes[i] = -1;
+            }
+          }
+        }
+      }
+    }
+
+    // generate color type names
+    String[] colorNames = new String[colorTypes.length];
+    IdsMap idsMap = IdsMapCache.get("CLOWNRGE.IDS");
+    if (idsMap != null) {
+      for (int i = 0; i < colorTypes.length; i++) {
+        if (colorTypes[i] > 0) {
+          IdsMapEntry idsEntry = idsMap.get(colorTypes[i]);
+          if (idsEntry != null) {
+            colorNames[i] = Misc.prettifySymbol(idsEntry.getSymbol()) + " color";
+          } else {
+            colorNames[i] = "Type " + Integer.toHexString(colorTypes[i]).toUpperCase() + " color";
+          }
+        } else {
+          colorNames[i] = "Unused color";
+        }
+      }
+    }
+
+    // add or update color fields
+    for (int i = 0; i < colorTypes.length; i++) {
+      if (update) {
+        StructEntry field = getAttribute(startOffset);
+        if (field instanceof ColorValue) {
+          field.setName(colorNames[i]);
+        }
+        startOffset += field.getSize();
+      } else {
+        addField(new ColorValue(buffer, startOffset, 1, colorNames[i], "PAL32.BMP"));
+        startOffset++;
+      }
+    }
+
+    return startOffset;
+  }
+
+  // Removes characters from flag descriptions which are shared by all relevant ids entries.
+  private IdsFlag uniqueIdsFlag(IdsFlag field, String idsFile, char separatorChar)
+  {
+    if (field == null)
+      return field;
+    IdsMap map = IdsMapCache.get(idsFile);
+    if (map == null)
+      return field;
+
+    String[] table = new String[field.getSize() * 8];
+    // determine longest common prefix
+    IdsMapEntry entry = map.get(0L);
+    String prefix = (entry != null) ? entry.getSymbol() : null;
+    for (int i = 0; i < table.length; i++) {
+      entry = map.get(1L << i);
+      if (entry != null) {
+        if (prefix == null) {
+          prefix = entry.getSymbol();
+        } else {
+          String name = entry.getSymbol();
+          for (int j = 0, jmax = Math.min(prefix.length(), name.length()); j < jmax; j++) {
+            if (Character.toUpperCase(prefix.charAt(j)) != Character.toUpperCase(name.charAt(j))) {
+              prefix = prefix.substring(0, j);
+              break;
+            }
+          }
+        }
+      }
+    }
+    if (prefix == null)
+      prefix = "";
+
+    // cut off prefix after last matching separator character
+    if (separatorChar != 0)
+      prefix = prefix.substring(0, prefix.lastIndexOf(separatorChar) + 1);
+
+    // update flag descriptions
+    entry = map.get(0L);
+    field.setEmptyDesc((entry != null) ? entry.getSymbol().substring(prefix.length()) : null);
+    for (int i = 0; i < table.length; i++) {
+      entry = map.get(1L << i);
+      table[i] = (entry != null) ? entry.getSymbol().substring(prefix.length()) : null;
+    }
+    field.setFlagDescriptions(field.getSize(), table, 0);
+
+    return field;
   }
 
   //--------------------- Begin Interface ItemListener ---------------------
@@ -1941,6 +2077,23 @@ public final class CreResource extends AbstractStruct
   }
 
 //--------------------- End Interface ItemListener ---------------------
+
+//--------------------- Begin Interface UpdateListener ---------------------
+
+  @Override
+  public boolean valueUpdated(UpdateEvent event)
+  {
+    // TODO: Listener queue fills with duplicate entries with each click on AnimateBitmap's "Update" button
+//    boolean retVal = false;
+//    if (event.getSource() instanceof AnimateBitmap) {
+//      AnimateBitmap animate = (AnimateBitmap)event.getSource();
+//      retVal = setColorFieldsPSTEE(animate.getValue(), null, 0x2c, true) > 0;
+//    }
+//    return retVal;
+    return false;
+  }
+
+//--------------------- End Interface UpdateListener ---------------------
 
 
   // Called by "Extended Search"
@@ -2190,4 +2343,3 @@ public final class CreResource extends AbstractStruct
     return false;
   }
 }
-

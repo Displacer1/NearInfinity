@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.updater;
@@ -46,6 +46,8 @@ import java.util.zip.ZipInputStream;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLPeerUnverifiedException;
+
+import static org.infinity.util.Misc.toNumber;
 
 /**
  * Generic collection of updater-related methods.
@@ -105,20 +107,20 @@ public class Utils
     }
 
     StringBuilder sb = new StringBuilder();
-    sb.append(String.format("%1$04d", cal.get(Calendar.YEAR)));
-    sb.append('-').append(String.format("%1$02d", cal.get(Calendar.MONTH) + 1));
-    sb.append('-').append(String.format("%1$02d", cal.get(Calendar.DAY_OF_MONTH)));
-    sb.append('T').append(String.format("%1$02d", cal.get(Calendar.HOUR_OF_DAY)));
-    sb.append(':').append(String.format("%1$02d", cal.get(Calendar.MINUTE)));
-    sb.append(':').append(String.format("%1$02d", cal.get(Calendar.SECOND)));
+    sb.append(String.format("%04d", cal.get(Calendar.YEAR)));
+    sb.append('-').append(String.format("%02d", cal.get(Calendar.MONTH) + 1));
+    sb.append('-').append(String.format("%02d", cal.get(Calendar.DAY_OF_MONTH)));
+    sb.append('T').append(String.format("%02d", cal.get(Calendar.HOUR_OF_DAY)));
+    sb.append(':').append(String.format("%02d", cal.get(Calendar.MINUTE)));
+    sb.append(':').append(String.format("%02d", cal.get(Calendar.SECOND)));
     int ofs = cal.get(Calendar.ZONE_OFFSET);
     if (ofs != 0) {
       char sign = (ofs < 0) ? '-' : '+';
       ofs = Math.abs(ofs);
       int ofsHour = ofs / 3600000;
       int ofsMin = (ofs / 60000) % 60;
-      sb.append(sign).append(String.format("%1$02d", ofsHour));
-      sb.append(':').append(String.format("%1$02d", ofsMin));
+      sb.append(sign).append(String.format("%02d", ofsHour));
+      sb.append(':').append(String.format("%02d", ofsMin));
     }
 
     return sb.toString();
@@ -745,18 +747,6 @@ public class Utils
 //    }
 //    return null;
 //  }
-
-  /** Convenience method for converting a String into an Integer. */
-  static int toNumber(String value, int defValue)
-  {
-    if (value != null) {
-      try {
-        return Integer.parseInt(value);
-      } catch (NumberFormatException e) {
-      }
-    }
-    return defValue;
-  }
 
   private Utils() {}
 

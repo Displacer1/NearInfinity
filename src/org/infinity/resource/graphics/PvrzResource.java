@@ -1,10 +1,11 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.graphics;
 
 import java.awt.BorderLayout;
+import java.awt.Component;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.image.BufferedImage;
@@ -29,6 +30,7 @@ import org.infinity.gui.WindowBlocker;
 import org.infinity.icon.Icons;
 import org.infinity.resource.Closeable;
 import org.infinity.resource.Profile;
+import org.infinity.resource.Referenceable;
 import org.infinity.resource.Resource;
 import org.infinity.resource.ResourceFactory;
 import org.infinity.resource.ViewableContainer;
@@ -36,7 +38,24 @@ import org.infinity.resource.key.ResourceEntry;
 import org.infinity.search.ReferenceSearcher;
 import org.infinity.util.io.StreamUtils;
 
-public class PvrzResource implements Resource, ActionListener, Closeable
+/**
+ * This resource is used to store graphics data that can be directly utilised by
+ * the video hardware.
+ * <p>
+ * PVRZ files are basically ZLIB-compressed PVR files. The file format is primarily
+ * used in conjunction with {@link BamResource BAM V2}, {@link MosResource MOS V2}
+ * and PVRZ-based {@link TisResource TIS} resources. Texture compression for the
+ * desktop versions of the games is limited to DXT1 (BC1) and DXT5 (BC3).
+ * Compression supported by the mobile versions can vary. Width and height of
+ * textures are usually a power of 2, up to a maximum of 1024 pixels.
+ * <p>
+ * The PVR File Format Specification is available for download from © Imagination
+ * Technologies: <a href="https://community.imgtec.com/developers/powervr/documentation/">PowerVR Documentation</a>
+ *
+ * @see <a href="https://gibberlings3.github.io/iesdp/file_formats/ie_formats/pvrz.htm">
+ * https://gibberlings3.github.io/iesdp/file_formats/ie_formats/pvrz.htm</a>
+ */
+public class PvrzResource implements Resource, ActionListener, Closeable, Referenceable
 {
   private static final ButtonPanel.Control Properties = ButtonPanel.Control.CUSTOM_1;
 
@@ -58,7 +77,7 @@ public class PvrzResource implements Resource, ActionListener, Closeable
   public void actionPerformed(ActionEvent event)
   {
     if (buttonPanel.getControlByType(ButtonPanel.Control.FIND_REFERENCES) == event.getSource()) {
-      new ReferenceSearcher(entry, new String[]{"BAM", "MOS", "TIS"}, panel.getTopLevelAncestor());
+      searchReferences(panel.getTopLevelAncestor());
     } else if (buttonPanel.getControlByType(Properties) == event.getSource()) {
       showProperties();
     } else if (event.getSource() == miExport) {
@@ -73,7 +92,7 @@ public class PvrzResource implements Resource, ActionListener, Closeable
         e.printStackTrace();
       }
       if (decompressed != null) {
-        String fileName = entry.toString().replace(".PVRZ", ".PVR");
+        final String fileName = StreamUtils.replaceFileExtension(entry.getResourceName(), "PVR");
         ResourceFactory.exportResource(entry, decompressed, fileName, panel.getTopLevelAncestor());
       } else {
         JOptionPane.showMessageDialog(panel.getTopLevelAncestor(),
@@ -83,7 +102,7 @@ public class PvrzResource implements Resource, ActionListener, Closeable
     } else if (event.getSource() == miPNG) {
       try {
         ByteArrayOutputStream os = new ByteArrayOutputStream();
-        String fileName = entry.toString().replace(".PVRZ", ".PNG");
+        final String fileName = StreamUtils.replaceFileExtension(entry.getResourceName(), "PNG");
         BufferedImage image = getImage();
         if (ImageIO.write(image, "png", os)) {
           ResourceFactory.exportResource(entry, StreamUtils.getByteBuffer(os.toByteArray()),
@@ -125,6 +144,22 @@ public class PvrzResource implements Resource, ActionListener, Closeable
   }
 
 //--------------------- End Interface Closeable ---------------------
+
+//--------------------- Begin Interface Referenceable ---------------------
+
+  @Override
+  public boolean isReferenceable()
+  {
+    return true;
+  }
+
+  @Override
+  public void searchReferences(Component parent)
+  {
+    new ReferenceSearcher(entry, new String[]{"BAM", "MOS", "TIS"}, parent);
+  }
+
+//--------------------- End Interface Referenceable ---------------------
 
 //--------------------- Begin Interface Viewable ---------------------
 
@@ -231,5 +266,4 @@ public class PvrzResource implements Resource, ActionListener, Closeable
     }
     return image;
   }
-
 }

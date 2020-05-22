@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.chu;
@@ -38,7 +38,6 @@ final class Window extends AbstractStruct // implements AddRemovable
   public static final String CHU_WINDOW_FIRST_CONTROL_INDEX = "First control index";
   public static final String CHU_WINDOW_FLAGS               = "Flags";
 
-  private static final String hasb[] = {"No", "Yes"};
   private static final String s_flag[] = {"No flags set", "Don't dim background"};
 
   Window() throws Exception
@@ -46,9 +45,9 @@ final class Window extends AbstractStruct // implements AddRemovable
     super(null, CHU_WINDOW_PANEL, StreamUtils.getByteBuffer(36), 0);
   }
 
-  Window(AbstractStruct superStruct, ByteBuffer buffer, int offset, int nr) throws Exception
+  Window(ChuResource chu, ByteBuffer buffer, int offset, int nr) throws Exception
   {
-    super(superStruct, CHU_WINDOW_PANEL + " " + nr, buffer, offset);
+    super(chu, CHU_WINDOW_PANEL + " " + nr, buffer, offset);
   }
 
 // --------------------- Begin Interface Writeable ---------------------
@@ -56,25 +55,21 @@ final class Window extends AbstractStruct // implements AddRemovable
   @Override
   public void write(OutputStream os) throws IOException
   {
-    Collections.sort(getList());
-    for (int i = 0; i < getFieldCount(); i++) {
-      StructEntry entry = getField(i);
-      if (entry instanceof Control)
+    Collections.sort(getFields());
+    for (final StructEntry entry : getFields()) {
+      if (entry instanceof Control) {
         break;
-      else
-        entry.write(os);
+      }
+      entry.write(os);
     }
   }
 
 // --------------------- End Interface Writeable ---------------------
 
-  public ChuResource getChu()
+  @Override
+  public ChuResource getParent()
   {
-    if (getSuperStruct() instanceof ChuResource) {
-      return (ChuResource)getSuperStruct();
-    } else {
-      return null;
-    }
+    return (ChuResource)super.getParent();
   }
 
   /** Returns the number of controls associated with this panel. */
@@ -129,10 +124,10 @@ final class Window extends AbstractStruct // implements AddRemovable
   {
     int numctrl = (int)((UnsignDecNumber)getAttribute(CHU_WINDOW_NUM_CONTROLS)).getValue();
     int first = (int)((UnsignDecNumber)getAttribute(CHU_WINDOW_FIRST_CONTROL_INDEX)).getValue();
-    int controlsoffset = getChu().getControlsOffset() + (first*8);
+    int controlsoffset = getParent().getControlsOffset() + (first*8);
     int endoffset = controlsoffset;
     for (int i = 0; i < numctrl; i++) {
-      int size = getChu().getControlOffset(first+i+1) - getChu().getControlOffset(first+i);
+      int size = getParent().getControlOffset(first+i+1) - getParent().getControlOffset(first+i);
       Control control = new Control(this, buffer, controlsoffset, i, size);
       controlsoffset = control.getEndOffset();
       endoffset = control.readControl(buffer);
@@ -143,8 +138,7 @@ final class Window extends AbstractStruct // implements AddRemovable
 
   public void writeControls(OutputStream os) throws IOException
   {
-    for (int i = 0; i < getFieldCount(); i++) {
-      Object o = getField(i);
+    for (final StructEntry o : getFields()) {
       if (o instanceof Control) {
         ((Control)o).writeControl(os);
       }
@@ -153,8 +147,7 @@ final class Window extends AbstractStruct // implements AddRemovable
 
   public void writeControlsTable(OutputStream os) throws IOException
   {
-    for (int i = 0; i < getFieldCount(); i++) {
-      Object o = getField(i);
+    for (final StructEntry o : getFields()) {
       if (o instanceof Control) {
         ((Control)o).write(os);
       }
@@ -164,7 +157,7 @@ final class Window extends AbstractStruct // implements AddRemovable
   @Override
   public int read(ByteBuffer buffer, int offset) throws Exception
   {
-    if (getChu().getPanelSize() == 36) {
+    if (getParent().getPanelSize() == 36) {
       addField(new TextString(buffer, offset, 8, CHU_WINDOW_NAME), 0);
       offset += 8;
     }
@@ -174,7 +167,7 @@ final class Window extends AbstractStruct // implements AddRemovable
     addField(new DecNumber(buffer, offset + 6, 2, CHU_WINDOW_POSITION_Y));
     addField(new DecNumber(buffer, offset + 8, 2, CHU_WINDOW_WIDTH));
     addField(new DecNumber(buffer, offset + 10, 2, CHU_WINDOW_HEIGHT));
-    addField(new Bitmap(buffer, offset + 12, 2, CHU_WINDOW_HAS_BACKGROUND, hasb));
+    addField(new Bitmap(buffer, offset + 12, 2, CHU_WINDOW_HAS_BACKGROUND, OPTION_NOYES));
     addField(new UnsignDecNumber(buffer, offset + 14, 2, CHU_WINDOW_NUM_CONTROLS));
     addField(new ResourceRef(buffer, offset + 16, CHU_WINDOW_BACKGROUND, "MOS"));
     addField(new UnsignDecNumber(buffer, offset + 24, 2, CHU_WINDOW_FIRST_CONTROL_INDEX));
@@ -182,4 +175,3 @@ final class Window extends AbstractStruct // implements AddRemovable
     return offset + 28;
   }
 }
-

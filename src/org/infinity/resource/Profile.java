@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource;
@@ -15,13 +15,19 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import org.infinity.NearInfinity;
+import org.infinity.resource.key.ResourceEntry;
 import org.infinity.resource.key.ResourceTreeFolder;
 import org.infinity.resource.key.ResourceTreeModel;
 import org.infinity.util.ObjectString;
@@ -50,6 +56,8 @@ public final class Profile implements FileWatcher.FileWatchListener
     STRING,
     /** Property data is of type {@link java.util.List}. */
     LIST,
+    /** Property data is of type {@link java.util.Map}. */
+    MAP,
     /** Property data is of type {@link java.nio.file.Path}. */
     PATH,
     /** Property data is of any custom data type. */
@@ -110,7 +118,7 @@ public final class Profile implements FileWatcher.FileWatchListener
     IWD,
     /** Includes IWD2. */
     IWD2,
-    /** Includes BG1EE, BG1SoD, BG2EE, IWDEE and EET. */
+    /** Includes BG1EE, BG1SoD, BG2EE, IWDEE, PSTEE and EET. */
     EE,
   }
 
@@ -138,6 +146,9 @@ public final class Profile implements FileWatcher.FileWatchListener
     /** Property: ({@code List<String>}) Returns a list of extra folders for the specified game.
      *            Extra parameter: Desired {@link Game}. */
     GET_GLOBAL_EXTRA_FOLDER_NAMES,
+    /** Property: ({@code List<String>}) Returns a list of save folders for the specified game.
+     *            Extra parameter: Desired {@link Game}. */
+    GET_GLOBAL_SAVE_FOLDER_NAMES,
     /** Property: ({@code String}) Returns the game's home folder name.
      *            Extra parameter: Desired <em>Enhanced Edition</em> {@link Game}. */
     GET_GLOBAL_HOME_FOLDER_NAME,
@@ -181,6 +192,8 @@ public final class Profile implements FileWatcher.FileWatchListener
      *            sorted by root folder priority (in descending order) and
      *            alphabetically in ascending order. */
     GET_GAME_EXTRA_FOLDERS,
+    /** Property: ({@code List<String>}) List of save folder names, sorted alphabetically in ascending order. */
+    GET_GAME_SAVE_FOLDER_NAMES,
     /** Property: ({@code Path}) The game's {@code chitin.key}. */
     GET_GAME_CHITIN_KEY,
     /** Property: ({@code List<Path>}) List of {@code mod.key} files of available DLCs
@@ -204,6 +217,10 @@ public final class Profile implements FileWatcher.FileWatchListener
      *            (Sorted by priority in descending order for Enhanced Editions,
      *             sorted by entries found in ini file for non-enhanced games) */
     GET_GAME_BIFF_FOLDERS,
+    /** Property: {@code Map<String, String>} Map of "Equipped appearance" codes with associated
+     *            descriptions. Map is generated on first call of {@code getEquippedAppearanceMap()}.
+     */
+    GET_GAME_EQUIPPED_APPEARANCES,
     /** Property: ({@code Boolean}) Is game an Enhanced Edition game? */
     IS_ENHANCED_EDITION,
     /** Property: ({@code Boolean}) Has current game been enhanced by TobEx? */
@@ -223,6 +240,8 @@ public final class Profile implements FileWatcher.FileWatchListener
     IS_SUPPORTED_BAM_V1,
     /** Property: ({@code Boolean}) Are {@code BAM V1} resources supported? */
     IS_SUPPORTED_BAMC_V1,
+    /** Property: ({@code Boolean}) Are {@code BAM V1} resources with alpha palette supported? */
+    IS_SUPPORTED_BAM_V1_ALPHA,
     /** Property: ({@code Boolean}) Are {@code BAM V2} resources supported? */
     IS_SUPPORTED_BAM_V2,
     /** Property: ({@code Boolean}) Are {@code BCS} resources supported? */
@@ -289,6 +308,8 @@ public final class Profile implements FileWatcher.FileWatchListener
     IS_SUPPORTED_ITM_V20,
     /** Property: ({@code Boolean}) Are {@code KEY} resources supported? */
     IS_SUPPORTED_KEY,
+    /** Property: ({@code Boolean}) Are {@code LOG} resources supported? */
+    IS_SUPPORTED_LOG,
     /** Property: ({@code Boolean}) Are {@code LUA} resources supported? */
     IS_SUPPORTED_LUA,
     /** Property: ({@code Boolean}) Are {@code MAZE} resources supported? */
@@ -380,10 +401,13 @@ public final class Profile implements FileWatcher.FileWatchListener
   private static final EnumMap<Game, String> GAME_TITLE = new EnumMap<Game, String>(Game.class);
   // List of supported extra folders for all supported games
   private static final EnumMap<Game, List<String>> GAME_EXTRA_FOLDERS = new EnumMap<Game, List<String>>(Game.class);
+  // List of supported saved game folders for all supported games
+  private static final EnumMap<Game, List<String>> GAME_SAVE_FOLDERS = new EnumMap<Game, List<String>>(Game.class);
   // Home folder name for Enhanced Edition Games
   private static final EnumMap<Game, String> GAME_HOME_FOLDER = new EnumMap<Game, String>(Game.class);
   // Set of resource extensions supported by Infinity Engine games
   private static final HashSet<String> SUPPORTED_RESOURCE_TYPES = new HashSet<>();
+  private static final HashMap<String, String> KNOWN_EQUIPPED_APPEARANCE = new HashMap<>();
 
   // Using the singleton approach
   private static Profile instance = null;
@@ -435,6 +459,27 @@ public final class Profile implements FileWatcher.FileWatchListener
     GAME_EXTRA_FOLDERS.put(Game.PSTEE, new ArrayList<>(Arrays.asList(EE_EXTRA_FOLDERS)));
     GAME_EXTRA_FOLDERS.put(Game.EET, new ArrayList<>(Arrays.asList(EE_EXTRA_FOLDERS)));
 
+    final String[] BG_SAVE_FOLDERS  = { "MPSave", "Save" };
+    final String[] EE_SAVE_FOLDERS  = { "BPSave", "MPBPSave", "MPSave", "Save" };
+    GAME_SAVE_FOLDERS.put(Game.Unknown, new ArrayList<>(Arrays.asList(BG_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.BG1, new ArrayList<>(Arrays.asList(BG_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.BG1TotSC, new ArrayList<>(Arrays.asList(BG_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.BG2SoA, new ArrayList<>(Arrays.asList(BG_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.BG2ToB, new ArrayList<>(Arrays.asList(BG_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.Tutu, new ArrayList<>(Arrays.asList(BG_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.BGT, new ArrayList<>(Arrays.asList(BG_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.PST, new ArrayList<>(Arrays.asList(BG_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.IWD, new ArrayList<>(Arrays.asList(BG_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.IWDHoW, new ArrayList<>(Arrays.asList(BG_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.IWDHowTotLM, new ArrayList<>(Arrays.asList(BG_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.IWD2, new ArrayList<>(Arrays.asList(BG_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.BG1EE, new ArrayList<>(Arrays.asList(EE_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.BG1SoD, new ArrayList<>(Arrays.asList(EE_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.BG2EE, new ArrayList<>(Arrays.asList(EE_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.IWDEE, new ArrayList<>(Arrays.asList(EE_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.PSTEE, new ArrayList<>(Arrays.asList(EE_SAVE_FOLDERS)));
+    GAME_SAVE_FOLDERS.put(Game.EET, new ArrayList<>(Arrays.asList(EE_SAVE_FOLDERS)));
+
     // initializing home folder names for Enhanced Edition games
     GAME_HOME_FOLDER.put(Game.BG1EE, "Baldur's Gate - Enhanced Edition");
     GAME_HOME_FOLDER.put(Game.BG1SoD, GAME_HOME_FOLDER.get(Game.BG1EE));
@@ -442,6 +487,81 @@ public final class Profile implements FileWatcher.FileWatchListener
     GAME_HOME_FOLDER.put(Game.EET, GAME_HOME_FOLDER.get(Game.BG2EE));
     GAME_HOME_FOLDER.put(Game.IWDEE, "Icewind Dale - Enhanced Edition");
     GAME_HOME_FOLDER.put(Game.PSTEE, "Planescape Torment - Enhanced Edition");
+
+    // initializing known equipped appearance codes for items
+    KNOWN_EQUIPPED_APPEARANCE.put("  ", "None");
+    KNOWN_EQUIPPED_APPEARANCE.put("2A", "Leather armor");
+    KNOWN_EQUIPPED_APPEARANCE.put("3A", "Chain mail");
+    KNOWN_EQUIPPED_APPEARANCE.put("4A", "Plate mail");
+    KNOWN_EQUIPPED_APPEARANCE.put("2W", "Mage robe 1");
+    KNOWN_EQUIPPED_APPEARANCE.put("3W", "Mage robe 2");
+    KNOWN_EQUIPPED_APPEARANCE.put("4W", "Mage robe 3");
+    KNOWN_EQUIPPED_APPEARANCE.put("AX", "Battle axe");
+    KNOWN_EQUIPPED_APPEARANCE.put("BS", "Shortbow");
+    KNOWN_EQUIPPED_APPEARANCE.put("BW", "Longbow");
+    KNOWN_EQUIPPED_APPEARANCE.put("C0", "Small shield (alternate 1)");
+    KNOWN_EQUIPPED_APPEARANCE.put("C1", "Medium shield (alternate 1)");
+    KNOWN_EQUIPPED_APPEARANCE.put("C2", "Large shield (alternate 1)");
+    KNOWN_EQUIPPED_APPEARANCE.put("C3", "Medium shield (alternate 2)");
+    KNOWN_EQUIPPED_APPEARANCE.put("C4", "Small shield (alternate 2)");
+    KNOWN_EQUIPPED_APPEARANCE.put("C5", "Large shield (alternate 2)");
+    KNOWN_EQUIPPED_APPEARANCE.put("C6", "Large shield (alternate 3)");
+    KNOWN_EQUIPPED_APPEARANCE.put("C7", "Medium shield (alternate 3)");
+    KNOWN_EQUIPPED_APPEARANCE.put("CB", "Crossbow");
+    KNOWN_EQUIPPED_APPEARANCE.put("CL", "Club");
+    KNOWN_EQUIPPED_APPEARANCE.put("D0", "Small shield (alternate 3)");
+    KNOWN_EQUIPPED_APPEARANCE.put("D1", "Buckler");
+    KNOWN_EQUIPPED_APPEARANCE.put("D2", "Small shield");
+    KNOWN_EQUIPPED_APPEARANCE.put("D3", "Medium shield");
+    KNOWN_EQUIPPED_APPEARANCE.put("D4", "Large shield");
+    KNOWN_EQUIPPED_APPEARANCE.put("DD", "Dagger");
+    KNOWN_EQUIPPED_APPEARANCE.put("F0", "Flail (alternate 1)");
+    KNOWN_EQUIPPED_APPEARANCE.put("F1", "Flail (alternate 2)");
+    KNOWN_EQUIPPED_APPEARANCE.put("F2", "Flaming sword (blue)");
+    KNOWN_EQUIPPED_APPEARANCE.put("F3", "Flail (alternate 3");
+    KNOWN_EQUIPPED_APPEARANCE.put("FL", "Flail");
+    KNOWN_EQUIPPED_APPEARANCE.put("FS", "Flaming sword");
+    KNOWN_EQUIPPED_APPEARANCE.put("GS", "Glowing staff");
+    KNOWN_EQUIPPED_APPEARANCE.put("H0", "Helmet 1");
+    KNOWN_EQUIPPED_APPEARANCE.put("H1", "Helmet 2");
+    KNOWN_EQUIPPED_APPEARANCE.put("H2", "Helmet 3");
+    KNOWN_EQUIPPED_APPEARANCE.put("H3", "Helmet 4");
+    KNOWN_EQUIPPED_APPEARANCE.put("H4", "Helmet 5");
+    KNOWN_EQUIPPED_APPEARANCE.put("H5", "Helmet 6");
+    KNOWN_EQUIPPED_APPEARANCE.put("H6", "Helmet 7");
+    KNOWN_EQUIPPED_APPEARANCE.put("H7", "Helmet 8");
+    KNOWN_EQUIPPED_APPEARANCE.put("HB", "Halberd");
+    KNOWN_EQUIPPED_APPEARANCE.put("J0", "Helmet 9");
+    KNOWN_EQUIPPED_APPEARANCE.put("J1", "Helmet 10");
+    KNOWN_EQUIPPED_APPEARANCE.put("J2", "Helmet 11");
+    KNOWN_EQUIPPED_APPEARANCE.put("J3", "Helmet 12");
+    KNOWN_EQUIPPED_APPEARANCE.put("J4", "Helmet 13");
+    KNOWN_EQUIPPED_APPEARANCE.put("J5", "Helmet 14");
+    KNOWN_EQUIPPED_APPEARANCE.put("J6", "Helmet 15");
+    KNOWN_EQUIPPED_APPEARANCE.put("J7", "Helmet 16");
+    KNOWN_EQUIPPED_APPEARANCE.put("J8", "Helmet 17");
+    KNOWN_EQUIPPED_APPEARANCE.put("J9", "Helmet 18");
+    KNOWN_EQUIPPED_APPEARANCE.put("JA", "Helmet 19");
+    KNOWN_EQUIPPED_APPEARANCE.put("JB", "Circlet");
+    KNOWN_EQUIPPED_APPEARANCE.put("JC", "Helmet 20");
+    KNOWN_EQUIPPED_APPEARANCE.put("M2", "Mace (alternate)");
+    KNOWN_EQUIPPED_APPEARANCE.put("MC", "Mace");
+    KNOWN_EQUIPPED_APPEARANCE.put("MS", "Morning star");
+    KNOWN_EQUIPPED_APPEARANCE.put("Q2", "Quarterstaff (alternate 1)");
+    KNOWN_EQUIPPED_APPEARANCE.put("Q3", "Quarterstaff (alternate 2)");
+    KNOWN_EQUIPPED_APPEARANCE.put("Q4", "Quarterstaff (alternate 3)");
+    KNOWN_EQUIPPED_APPEARANCE.put("QS", "Quarterstaff");
+    KNOWN_EQUIPPED_APPEARANCE.put("S0", "Bastard sword");
+    KNOWN_EQUIPPED_APPEARANCE.put("S1", "Long sword");
+    KNOWN_EQUIPPED_APPEARANCE.put("S2", "Two-handed sword");
+    KNOWN_EQUIPPED_APPEARANCE.put("S3", "Katana");
+    KNOWN_EQUIPPED_APPEARANCE.put("SC", "Scimitar");
+    KNOWN_EQUIPPED_APPEARANCE.put("SL", "Sling");
+    KNOWN_EQUIPPED_APPEARANCE.put("SP", "Spear");
+    KNOWN_EQUIPPED_APPEARANCE.put("SS", "Short sword");
+    KNOWN_EQUIPPED_APPEARANCE.put("WH", "War hammer");
+    KNOWN_EQUIPPED_APPEARANCE.put("YW", "Wings (male)");
+    KNOWN_EQUIPPED_APPEARANCE.put("ZW", "Wings (female)");
 
     // static properties are always available
     initStaticProperties();
@@ -568,6 +688,7 @@ public final class Profile implements FileWatcher.FileWatchListener
         switch (key) {
           case GET_GLOBAL_GAME_TITLE:
           case GET_GLOBAL_EXTRA_FOLDER_NAMES:
+          case GET_GLOBAL_SAVE_FOLDER_NAMES:
           case GET_GLOBAL_HOME_FOLDER_NAME:
             if (param instanceof Game) {
               map = prop.getData();
@@ -869,6 +990,8 @@ public final class Profile implements FileWatcher.FileWatchListener
         (Boolean)getProperty(Key.IS_SUPPORTED_ITM_V11) ||
         (Boolean)getProperty(Key.IS_SUPPORTED_ITM_V20)) { list.add("ITM"); }
     if (ignoreGame ||
+        (Boolean)getProperty(Key.IS_SUPPORTED_LOG))     { list.add("LOG"); }
+    if (ignoreGame ||
         (Boolean)getProperty(Key.IS_SUPPORTED_LUA))     { list.add("LUA"); }
     if (ignoreGame ||
         (Boolean)getProperty(Key.IS_SUPPORTED_MENU))     { list.add("MENU"); }
@@ -940,6 +1063,81 @@ public final class Profile implements FileWatcher.FileWatchListener
     return retVal;
   }
 
+  /**
+   * Returns a map of equipped appearance codes with associated descriptions.
+   */
+  public static Map<String, String> getEquippedAppearanceMap()
+  {
+    Map<String, String> retVal = getProperty(Key.GET_GAME_EQUIPPED_APPEARANCES);
+    if (retVal == null) {
+      Set<String> codes = new HashSet<>();
+      // determine armor types
+      List<ResourceEntry> entries = ResourceFactory.getResources(Pattern.compile(".[DHEIO][FM][BCFTW][^1]G1\\.BAM", Pattern.CASE_INSENSITIVE));
+      for (final ResourceEntry entry: entries) {
+        String code = entry.getResourceName().substring(4, 5).toUpperCase(Locale.ENGLISH);
+        codes.add(code + "A");
+        codes.add(code + "W");
+      }
+      // determine weapon types
+      entries = ResourceFactory.getResources(Pattern.compile("W[PQ][LMS]..G1\\.BAM", Pattern.CASE_INSENSITIVE));
+      for (final ResourceEntry entry: entries) {
+        codes.add(entry.getResourceName().substring(3, 5).toUpperCase(Locale.ENGLISH));
+      }
+
+      // fall back to fixed list if needed
+      if (codes.isEmpty()) {
+        codes.add("AX");
+        codes.add("CB");
+        codes.add("CL");
+        codes.add("DD");
+        codes.add("S1");
+        codes.add("WH");
+      }
+
+      // space for "no type"
+      codes.add("  ");
+
+      retVal = new TreeMap<String, String>();
+      for (final String code: codes) {
+        String desc = KNOWN_EQUIPPED_APPEARANCE.get(code);
+        if (desc != null) {
+          retVal.put(code, desc);
+        } else {
+          retVal.put(code, "Unknown (" + code + ")");
+        }
+      }
+
+      addEntry(Key.GET_GAME_EQUIPPED_APPEARANCES, Type.MAP, retVal);
+    }
+    return retVal;
+  }
+
+  /**
+   * Returns whether the specified path is a saved game folder or a file belonging to a saved game.
+   * @param relPath Relative path of file or folder to check.
+   * @return {@code true} if the path is a saved game folder or file.
+   */
+  public static boolean isSaveGame(Path relPath)
+  {
+    boolean retVal = false;
+    if (relPath != null) {
+      List<Path> roots = getRootFolders();
+      for (final Path root: roots) {
+        Path savePath = root.resolve(relPath);
+        List<String> folderNames = getProperty(Key.GET_GAME_SAVE_FOLDER_NAMES);
+        for (final String saveFolder: folderNames) {
+          Path saveRootPath = FileManager.queryExisting(root, saveFolder);
+          if (saveRootPath != null && savePath.startsWith(saveRootPath)) {
+            retVal = true;
+            break;
+          }
+        }
+        if (retVal) break;
+      }
+    }
+    return retVal;
+  }
+
   // Returns the Property object assigned to the given key.
   private static Property getEntry(Key  key)
   {
@@ -976,6 +1174,7 @@ public final class Profile implements FileWatcher.FileWatchListener
     addEntry(Key.GET_GLOBAL_GAMES, Type.LIST, gameList);
     addEntry(Key.GET_GLOBAL_GAME_TITLE, Type.STRING, GAME_TITLE);
     addEntry(Key.GET_GLOBAL_EXTRA_FOLDER_NAMES, Type.LIST, GAME_EXTRA_FOLDERS);
+    addEntry(Key.GET_GLOBAL_SAVE_FOLDER_NAMES, Type.LIST, GAME_SAVE_FOLDERS);
     addEntry(Key.GET_GLOBAL_HOME_FOLDER_NAME, Type.STRING, GAME_HOME_FOLDER);
 
     // setting default override folder name
@@ -1181,6 +1380,15 @@ public final class Profile implements FileWatcher.FileWatchListener
       if (ini != null && Files.isRegularFile(ini)) {
         addEntry(Key.GET_GAME_INI_FILE, Type.PATH, ini);
       }
+    } else if (game == Game.Tutu ||
+        Files.isRegularFile(FileManager.query(gameRoots, "bg1tutu.exe")) ||
+        Files.isRegularFile(FileManager.query(gameRoots, "bg1mov/MovieCD1.bif"))) {
+      if (game == null) game = Game.Tutu;
+      addEntry(Key.GET_GAME_INI_NAME, Type.STRING, "baldur.ini");
+      Path ini = FileManager.query(gameRoots, getProperty(Key.GET_GAME_INI_NAME));
+      if (ini != null && Files.isRegularFile(ini)) {
+        addEntry(Key.GET_GAME_INI_FILE, Type.PATH, ini);
+      }
     } else if (game == Game.BG2SoA || game == Game.BG2ToB || game == Game.BGT ||
                (Files.isRegularFile(FileManager.query(gameRoots, "baldur.exe"))) &&
                (Files.isRegularFile(FileManager.query(gameRoots, "BGConfig.exe")))) {
@@ -1200,14 +1408,6 @@ public final class Profile implements FileWatcher.FileWatchListener
       if (ini != null && Files.isRegularFile(ini)) {
         addEntry(Key.GET_GAME_INI_FILE, Type.PATH, ini);
       }
-    } else if (game == Game.Tutu ||
-               Files.isRegularFile(FileManager.query(gameRoots, "bg1tutu.exe"))) {
-      if (game == null) game = Game.Tutu;
-      addEntry(Key.GET_GAME_INI_NAME, Type.STRING, "baldur.ini");
-      Path ini = FileManager.query(gameRoots, getProperty(Key.GET_GAME_INI_NAME));
-      if (ini != null && Files.isRegularFile(ini)) {
-        addEntry(Key.GET_GAME_INI_FILE, Type.PATH, ini);
-      }
     } else {
       // game == Game.Unknown
       // TODO: present list of available game types to choose from
@@ -1221,6 +1421,7 @@ public final class Profile implements FileWatcher.FileWatchListener
     // adding priliminary game type into storage
     addEntry(Key.GET_GAME_TYPE, Type.OBJECT, game);
     addEntry(Key.GET_GAME_EXTRA_FOLDER_NAMES, Type.LIST, GAME_EXTRA_FOLDERS.get(game));
+    addEntry(Key.GET_GAME_SAVE_FOLDER_NAMES, Type.LIST, GAME_SAVE_FOLDERS.get(game));
 
     // determining game engine
     initGameEngine();
@@ -1473,9 +1674,9 @@ public final class Profile implements FileWatcher.FileWatchListener
 
       // putting all root folders into a list ordered by priority (highest first)
       List<Path> gameRoots = new ArrayList<>();
-      gameRoots.add(gameRoot);
-      dlcRoots.forEach((path) -> gameRoots.add(path));
       gameRoots.add(homeRoot);
+      dlcRoots.forEach((path) -> gameRoots.add(path));
+      gameRoots.add(gameRoot);
 
       // registering override paths
       for (final Path root: gameRoots) {
@@ -1535,23 +1736,24 @@ public final class Profile implements FileWatcher.FileWatchListener
     Game game = getGame();
     Engine engine = getEngine();
 
-    addEntry(Key.IS_SUPPORTED_2DA, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_2DA, Type.BOOLEAN, true);
 
-    addEntry(Key.IS_SUPPORTED_ACM, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_ACM, Type.BOOLEAN, true);
 
     addEntry(Key.IS_SUPPORTED_ARE_V10, Type.BOOLEAN, (engine == Engine.BG1 || engine == Engine.BG2 ||
                                                       engine == Engine.IWD || engine == Engine.PST ||
                                                       engine == Engine.EE || engine == Engine.Unknown));
     addEntry(Key.IS_SUPPORTED_ARE_V91, Type.BOOLEAN, (engine == Engine.IWD2));
 
-    addEntry(Key.IS_SUPPORTED_BAM_V1, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_BAM_V1, Type.BOOLEAN, true);
     addEntry(Key.IS_SUPPORTED_BAMC_V1, Type.BOOLEAN, (engine == Engine.BG2 || engine == Engine.IWD ||
                                                       engine == Engine.IWD2 || engine == Engine.EE));
+    addEntry(Key.IS_SUPPORTED_BAM_V1_ALPHA, Type.BOOLEAN, isEnhancedEdition());
     addEntry(Key.IS_SUPPORTED_BAM_V2, Type.BOOLEAN, isEnhancedEdition());
 
-    addEntry(Key.IS_SUPPORTED_BCS, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_BCS, Type.BOOLEAN, true);
 
-    addEntry(Key.IS_SUPPORTED_BIFF, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_BIFF, Type.BOOLEAN, true);
     addEntry(Key.IS_SUPPORTED_BIF, Type.BOOLEAN, (engine == Engine.IWD));
     addEntry(Key.IS_SUPPORTED_BIFC, Type.BOOLEAN, (engine == Engine.BG2 || engine == Engine.IWD2));
 
@@ -1560,7 +1762,7 @@ public final class Profile implements FileWatcher.FileWatchListener
     addEntry(Key.IS_SUPPORTED_BIO, Type.BOOLEAN, (engine == Engine.BG1 || engine == Engine.BG2 ||
                                                   engine == Engine.EE || engine == Engine.Unknown));
 
-    addEntry(Key.IS_SUPPORTED_BMP_PAL, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_BMP_PAL, Type.BOOLEAN, true);
     addEntry(Key.IS_SUPPORTED_BMP_ALPHA, Type.BOOLEAN, isEnhancedEdition());
 
     addEntry(Key.IS_SUPPORTED_CHR_V10, Type.BOOLEAN, (engine == Engine.BG1 || engine == Engine.Unknown));
@@ -1568,7 +1770,7 @@ public final class Profile implements FileWatcher.FileWatchListener
     addEntry(Key.IS_SUPPORTED_CHR_V21, Type.BOOLEAN, (game == Game.BG2ToB || engine == Engine.EE));
     addEntry(Key.IS_SUPPORTED_CHR_V22, Type.BOOLEAN, (engine == Engine.IWD2));
 
-    addEntry(Key.IS_SUPPORTED_CHU, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_CHU, Type.BOOLEAN, true);
 
     addEntry(Key.IS_SUPPORTED_CRE_V10, Type.BOOLEAN, (engine == Engine.BG1 || engine == Engine.BG2 ||
                                                       engine == Engine.EE || engine == Engine.Unknown));
@@ -1576,11 +1778,11 @@ public final class Profile implements FileWatcher.FileWatchListener
     addEntry(Key.IS_SUPPORTED_CRE_V22, Type.BOOLEAN, (engine == Engine.IWD2));
     addEntry(Key.IS_SUPPORTED_CRE_V90, Type.BOOLEAN, (engine == Engine.IWD));
 
-    addEntry(Key.IS_SUPPORTED_DLG, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_DLG, Type.BOOLEAN, true);
 
     addEntry(Key.IS_SUPPORTED_EFF, Type.BOOLEAN, (engine == Engine.BG1 || engine == Engine.BG2 ||
                                                   engine == Engine.IWD || engine == Engine.EE ||
-                                                  engine == Engine.Unknown));
+                                                  engine == Engine.IWD2 || engine == Engine.Unknown));
 
     addEntry(Key.IS_SUPPORTED_FNT, Type.BOOLEAN, isEnhancedEdition());
 
@@ -1594,7 +1796,7 @@ public final class Profile implements FileWatcher.FileWatchListener
 
     addEntry(Key.IS_SUPPORTED_GUI, Type.BOOLEAN, isEnhancedEdition());
 
-    addEntry(Key.IS_SUPPORTED_IDS, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_IDS, Type.BOOLEAN, true);
 
     addEntry(Key.IS_SUPPORTED_INI, Type.BOOLEAN, (engine == Engine.IWD || engine == Engine.IWD2 ||
                                                   engine == Engine.PST || engine == Engine.EE));
@@ -1605,7 +1807,9 @@ public final class Profile implements FileWatcher.FileWatchListener
     addEntry(Key.IS_SUPPORTED_ITM_V11, Type.BOOLEAN, (engine == Engine.PST));
     addEntry(Key.IS_SUPPORTED_ITM_V20, Type.BOOLEAN, (engine == Engine.IWD2));
 
-    addEntry(Key.IS_SUPPORTED_KEY, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_KEY, Type.BOOLEAN, true);
+
+    addEntry(Key.IS_SUPPORTED_LOG, Type.BOOLEAN, true);
 
     addEntry(Key.IS_SUPPORTED_LUA, Type.BOOLEAN, isEnhancedEdition());
 
@@ -1613,18 +1817,18 @@ public final class Profile implements FileWatcher.FileWatchListener
 
     addEntry(Key.IS_SUPPORTED_MENU, Type.BOOLEAN, isEnhancedEdition());
 
-    addEntry(Key.IS_SUPPORTED_MOS_V1, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_MOS_V1, Type.BOOLEAN, true);
     addEntry(Key.IS_SUPPORTED_MOSC_V1, Type.BOOLEAN, (engine == Engine.BG2 || engine == Engine.IWD ||
                                                       engine == Engine.IWD2 || engine == Engine.EE));
     addEntry(Key.IS_SUPPORTED_MOS_V2, Type.BOOLEAN, isEnhancedEdition());
 
-    addEntry(Key.IS_SUPPORTED_MUS, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_MUS, Type.BOOLEAN, true);
 
-    addEntry(Key.IS_SUPPORTED_MVE, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_MVE, Type.BOOLEAN, true);
 
     addEntry(Key.IS_SUPPORTED_OGG, Type.BOOLEAN, isEnhancedEdition());
 
-    addEntry(Key.IS_SUPPORTED_PLT, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_PLT, Type.BOOLEAN, true);
 
     addEntry(Key.IS_SUPPORTED_PNG, Type.BOOLEAN, isEnhancedEdition());
 
@@ -1634,7 +1838,7 @@ public final class Profile implements FileWatcher.FileWatchListener
 
     addEntry(Key.IS_SUPPORTED_RES, Type.BOOLEAN, (engine == Engine.IWD || engine == Engine.IWD2));
 
-    addEntry(Key.IS_SUPPORTED_SAV, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_SAV, Type.BOOLEAN, true);
 
     addEntry(Key.IS_SUPPORTED_SPL_V1, Type.BOOLEAN, (engine == Engine.BG1 || engine == Engine.BG2 ||
                                                      engine == Engine.IWD || engine == Engine.PST ||
@@ -1653,10 +1857,10 @@ public final class Profile implements FileWatcher.FileWatchListener
     addEntry(Key.IS_SUPPORTED_STO_V11, Type.BOOLEAN, (engine == Engine.PST || game == Game.PSTEE));
     addEntry(Key.IS_SUPPORTED_STO_V90, Type.BOOLEAN, (engine == Engine.IWD || engine == Engine.IWD2));
 
-    addEntry(Key.IS_SUPPORTED_TIS_V1, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_TIS_V1, Type.BOOLEAN, true);
     addEntry(Key.IS_SUPPORTED_TIS_V2, Type.BOOLEAN, isEnhancedEdition());
 
-    addEntry(Key.IS_SUPPORTED_TLK, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_TLK, Type.BOOLEAN, true);
 
     addEntry(Key.IS_SUPPORTED_TO_V1, Type.BOOLEAN, (engine == Engine.BG2 || engine == Engine.IWD));
     addEntry(Key.IS_SUPPORTED_TO_V2, Type.BOOLEAN, isEnhancedEdition());
@@ -1669,17 +1873,17 @@ public final class Profile implements FileWatcher.FileWatchListener
 
     addEntry(Key.IS_SUPPORTED_VVC, Type.BOOLEAN, (engine == Engine.BG2 || engine == Engine.EE));
 
-    addEntry(Key.IS_SUPPORTED_WAV, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_WAV, Type.BOOLEAN, true);
 
-    addEntry(Key.IS_SUPPORTED_WAVC, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_WAVC, Type.BOOLEAN, true);
 
     addEntry(Key.IS_SUPPORTED_WBM, Type.BOOLEAN, isEnhancedEdition());
 
-    addEntry(Key.IS_SUPPORTED_WED, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_WED, Type.BOOLEAN, true);
 
     addEntry(Key.IS_SUPPORTED_WFX, Type.BOOLEAN, (engine == Engine.BG2 || engine == Engine.EE));
 
-    addEntry(Key.IS_SUPPORTED_WMP, Type.BOOLEAN, Boolean.valueOf(true));
+    addEntry(Key.IS_SUPPORTED_WMP, Type.BOOLEAN, true);
   }
 
   // Initializes game-specific features
@@ -1735,6 +1939,7 @@ public final class Profile implements FileWatcher.FileWatchListener
 
       // getting save folder names
       List<String> extraNames = getProperty(Key.GET_GAME_EXTRA_FOLDER_NAMES);
+      List<String> saveNames = getProperty(Key.GET_GAME_SAVE_FOLDER_NAMES);
       boolean available = false;
       for (int row = 0; row < table.getRowCount(); row++) {
         String save = table.get(row, col);
@@ -1752,10 +1957,12 @@ public final class Profile implements FileWatcher.FileWatchListener
           if (!checkSave) {
             available = true;
             extraNames.add(save);
+            saveNames.add(save);
           }
           if (!checkMPSave) {
             available = true;
             extraNames.add(mpsave);
+            saveNames.add(mpsave);
           }
         }
       }
@@ -1764,6 +1971,8 @@ public final class Profile implements FileWatcher.FileWatchListener
         // updating extra folder name and path list
         Collections.sort(extraNames);
         updateProperty(Key.GET_GAME_EXTRA_FOLDER_NAMES, extraNames);
+        Collections.sort(saveNames);
+        updateProperty(Key.GET_GAME_SAVE_FOLDER_NAMES, saveNames);
         initExtraFolders();
 
         // adding new paths to resource tree
@@ -1957,7 +2166,7 @@ public final class Profile implements FileWatcher.FileWatchListener
     @Override
     public String toString()
     {
-      return String.format("%1$d:[%2$s] = %3$s", key, type, data);
+      return String.format("%d:[%s] = %s", key, type, data);
     }
   }
 }

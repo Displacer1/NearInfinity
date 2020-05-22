@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.are;
@@ -74,7 +74,6 @@ public final class Door extends AbstractStruct implements AddRemovable, HasVerti
   public static final String ARE_DOOR_SPEAKER_NAME                      = "Speaker name";
   public static final String ARE_DOOR_DIALOG                            = "Dialogue";
 
-  public static final String[] s_noyes = {"No", "Yes"};
   public static final String[] s_flag = {"No flags set", "Door open", "Door locked", "Trap resets",
                                          "Detectable trap", "Door forced", "Cannot close", "Door located",
                                          "Door secret", "Secret door detected", "Can be looked through",
@@ -173,8 +172,7 @@ public final class Door extends AbstractStruct implements AddRemovable, HasVerti
     ((DecNumber)getAttribute(ARE_DOOR_FIRST_VERTEX_INDEX_IMPEDED_CLOSED)).setValue(number + count);
     count += ((DecNumber)getAttribute(ARE_DOOR_NUM_VERTICES_IMPEDED_CLOSED)).getValue();
 
-    for (int i = 0; i < getFieldCount(); i++) {
-      StructEntry entry = getField(i);
+    for (final StructEntry entry : getFields()) {
       if (entry instanceof Vertex) {
         entry.setOffset(offset);
         ((Vertex)entry).realignStructOffsets();
@@ -189,7 +187,7 @@ public final class Door extends AbstractStruct implements AddRemovable, HasVerti
   @Override
   protected void setAddRemovableOffset(AddRemovable datatype)
   {
-    int offset = ((HexNumber)getSuperStruct().getAttribute(AreResource.ARE_OFFSET_VERTICES)).getValue();
+    final int offset = ((HexNumber)getParent().getAttribute(AreResource.ARE_OFFSET_VERTICES)).getValue();
     if (datatype instanceof OpenVertex) {
       int index = ((DecNumber)getAttribute(ARE_DOOR_FIRST_VERTEX_INDEX_OPEN)).getValue();
       index += ((DecNumber)getAttribute(ARE_DOOR_NUM_VERTICES_OPEN)).getValue();
@@ -247,8 +245,8 @@ public final class Door extends AbstractStruct implements AddRemovable, HasVerti
     addField(new DecNumber(buffer, offset + 104, 4, ARE_DOOR_CURSOR_INDEX));
     addField(new DecNumber(buffer, offset + 108, 2, ARE_DOOR_TRAP_DETECTION_DIFFICULTY));
     addField(new DecNumber(buffer, offset + 110, 2, ARE_DOOR_TRAP_REMOVAL_DIFFICULTY));
-    addField(new Bitmap(buffer, offset + 112, 2, ARE_DOOR_TRAPPED, s_noyes));
-    addField(new Bitmap(buffer, offset + 114, 2, ARE_DOOR_TRAP_DETECTED, s_noyes));
+    addField(new Bitmap(buffer, offset + 112, 2, ARE_DOOR_TRAPPED, OPTION_NOYES));
+    addField(new Bitmap(buffer, offset + 114, 2, ARE_DOOR_TRAP_DETECTED, OPTION_NOYES));
     addField(new DecNumber(buffer, offset + 116, 2, ARE_DOOR_LAUNCH_POINT_X));
     addField(new DecNumber(buffer, offset + 118, 2, ARE_DOOR_LAUNCH_POINT_Y));
     addField(new ResourceRef(buffer, offset + 120, ARE_DOOR_KEY, "ITM"));
@@ -270,4 +268,3 @@ public final class Door extends AbstractStruct implements AddRemovable, HasVerti
     return offset + 200;
   }
 }
-

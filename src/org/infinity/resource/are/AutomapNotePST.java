@@ -14,6 +14,7 @@ import org.infinity.resource.AbstractStruct;
 import org.infinity.resource.AddRemovable;
 import org.infinity.util.io.StreamUtils;
 
+/** These are textual notes which are entered automatically (PST). */
 public final class AutomapNotePST extends AbstractStruct implements AddRemovable
 {
   // ARE/Automap Notes-specific field labels
@@ -23,16 +24,14 @@ public final class AutomapNotePST extends AbstractStruct implements AddRemovable
   public static final String ARE_AUTOMAP_TEXT       = "Text";
   public static final String ARE_AUTOMAP_READ_ONLY  = "Is read only?";
 
-  public static final String[] s_noyes = { "No", "Yes" };
-
   AutomapNotePST() throws Exception
   {
     super(null, ARE_AUTOMAP, StreamUtils.getByteBuffer(532), 0);
   }
 
-  AutomapNotePST(AbstractStruct superStruct, ByteBuffer buffer, int offset, int number) throws Exception
+  AutomapNotePST(AbstractStruct area, ByteBuffer buffer, int offset, int number) throws Exception
   {
-    super(superStruct, ARE_AUTOMAP + " " + number, buffer, offset);
+    super(area, ARE_AUTOMAP + " " + number, buffer, offset);
   }
 
 //--------------------- Begin Interface AddRemovable ---------------------
@@ -51,7 +50,7 @@ public final class AutomapNotePST extends AbstractStruct implements AddRemovable
     addField(new DecNumber(buffer, offset, 4, ARE_AUTOMAP_LOCATION_X));
     addField(new DecNumber(buffer, offset + 4, 4, ARE_AUTOMAP_LOCATION_Y));
     addField(new TextString(buffer, offset + 8, 500, ARE_AUTOMAP_TEXT));
-    addField(new Bitmap(buffer, offset + 508, 4, ARE_AUTOMAP_READ_ONLY, s_noyes));
+    addField(new Bitmap(buffer, offset + 508, 4, ARE_AUTOMAP_READ_ONLY, OPTION_NOYES));
     addField(new Unknown(buffer, offset + 512, 20));
     return offset + 532;
   }

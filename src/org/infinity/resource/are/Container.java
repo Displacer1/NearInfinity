@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.are;
@@ -59,7 +59,6 @@ public final class Container extends AbstractStruct implements AddRemovable, Has
 
   public static final String[] s_type = { "", "Bag", "Chest", "Drawer", "Pile", "Table", "Shelf",
                                           "Altar", "Non-visible", "Spellbook", "Body", "Barrel", "Crate"};
-  public static final String[] s_noyes = {"No", "Yes"};
   public static final String[] s_flag = { "No flags set", "Locked", "Disable if no owner", "Magical lock",
                                           "Trap resets", "Remove only", "Disabled", "EE: Don't clear" };
 
@@ -154,8 +153,7 @@ public final class Container extends AbstractStruct implements AddRemovable, Has
   {
     ((DecNumber)getAttribute(ARE_CONTAINER_FIRST_VERTEX_INDEX)).setValue(number);
     int count = 0;
-    for (int i = 0; i < getFieldCount(); i++) {
-      StructEntry entry = getField(i);
+    for (final StructEntry entry : getFields()) {
       if (entry instanceof Vertex) {
         entry.setOffset(offset);
         ((Vertex)entry).realignStructOffsets();
@@ -175,14 +173,14 @@ public final class Container extends AbstractStruct implements AddRemovable, Has
     if (datatype instanceof Vertex) {
       int index = ((DecNumber)getAttribute(ARE_CONTAINER_FIRST_VERTEX_INDEX)).getValue();
       index += ((DecNumber)getAttribute(ARE_CONTAINER_NUM_VERTICES)).getValue();
-      int offset = ((HexNumber)getSuperStruct().getAttribute(AreResource.ARE_OFFSET_VERTICES)).getValue();
+      final int offset = ((HexNumber)getParent().getAttribute(AreResource.ARE_OFFSET_VERTICES)).getValue();
       datatype.setOffset(offset + 4 * index);
       ((AbstractStruct)datatype).realignStructOffsets();
     }
     else if (datatype instanceof Item) {
       int index = ((DecNumber)getAttribute(ARE_CONTAINER_FIRST_ITEM_INDEX)).getValue();
       index += ((DecNumber)getAttribute(ARE_CONTAINER_NUM_ITEMS)).getValue();
-      int offset = ((HexNumber)getSuperStruct().getAttribute(AreResource.ARE_OFFSET_ITEMS)).getValue();
+      final int offset = ((HexNumber)getParent().getAttribute(AreResource.ARE_OFFSET_ITEMS)).getValue();
       datatype.setOffset(offset + 20 * index);
       ((AbstractStruct)datatype).realignStructOffsets();
     }
@@ -203,8 +201,7 @@ public final class Container extends AbstractStruct implements AddRemovable, Has
   {
     ((DecNumber)getAttribute(ARE_CONTAINER_FIRST_ITEM_INDEX)).setValue(number);
     int count = 0;
-    for (int i = 0; i < getFieldCount(); i++) {
-      StructEntry entry = getField(i);
+    for (final StructEntry entry : getFields()) {
       if (entry instanceof Item) {
         entry.setOffset(offset);
         ((Item)entry).realignStructOffsets();
@@ -227,8 +224,8 @@ public final class Container extends AbstractStruct implements AddRemovable, Has
     addField(new Flag(buffer, offset + 40, 4, ARE_CONTAINER_FLAGS, s_flag));
     addField(new DecNumber(buffer, offset + 44, 2, ARE_CONTAINER_TRAP_DETECTION_DIFFICULTY));
     addField(new DecNumber(buffer, offset + 46, 2, ARE_CONTAINER_TRAP_REMOVAL_DIFFICULTY));
-    addField(new Bitmap(buffer, offset + 48, 2, ARE_CONTAINER_TRAPPED, s_noyes));
-    addField(new Bitmap(buffer, offset + 50, 2, ARE_CONTAINER_TRAP_DETECTED, s_noyes));
+    addField(new Bitmap(buffer, offset + 48, 2, ARE_CONTAINER_TRAPPED, OPTION_NOYES));
+    addField(new Bitmap(buffer, offset + 50, 2, ARE_CONTAINER_TRAP_DETECTED, OPTION_NOYES));
     addField(new DecNumber(buffer, offset + 52, 2, ARE_CONTAINER_LAUNCH_POINT_X));
     addField(new DecNumber(buffer, offset + 54, 2, ARE_CONTAINER_LAUNCH_POINT_Y));
     addField(new DecNumber(buffer, offset + 56, 2, ARE_CONTAINER_BOUNDING_BOX_LEFT));
@@ -249,4 +246,3 @@ public final class Container extends AbstractStruct implements AddRemovable, Has
     return offset + 192;
   }
 }
-

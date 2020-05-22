@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2018 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.itm;
@@ -8,6 +8,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
+import java.util.List;
+import java.util.ListIterator;
 
 import javax.swing.BorderFactory;
 import javax.swing.JComponent;
@@ -38,10 +40,29 @@ import org.infinity.resource.Resource;
 import org.infinity.resource.ResourceFactory;
 import org.infinity.resource.StructEntry;
 import org.infinity.resource.key.ResourceEntry;
+import org.infinity.resource.spl.SplResource;
 import org.infinity.search.SearchOptions;
+import org.infinity.util.IdsMapCache;
 import org.infinity.util.StringTable;
 import org.infinity.util.io.StreamUtils;
 
+/**
+ * This resource describes an "item". Items include weapons, armor, books, scrolls,
+ * rings and more. Items can have attached {@link Ability abilties}, occuring either
+ * when a target creature it hit, or when the item is equipped. ITM files have a
+ * similar structure to {@link SplResource SPL} files.
+ * <p>
+ * ITM files consist of a main header, zero or more extended headers (each containing
+ * zero or more feature blocks) and zero or more casting feature blocks. All the
+ * feature blocks are stored as a continuous data segment, with each extended header
+ * containing an offset into this data, and the main header containing an offset into
+ * this data for the casting feature blocks.
+ * <p>
+ * A creature must meet the minimum stat requirements to be able to converse with an item.
+ *
+ * @see <a href="https://gibberlings3.github.io/iesdp/file_formats/ie_formats/itm_v1.htm">
+ * https://gibberlings3.github.io/iesdp/file_formats/ie_formats/itm_v1.htm</a>
+ */
 public final class ItmResource extends AbstractStruct implements Resource, HasAddRemovable, HasViewerTabs
 {
   // ITM-specific field labels
@@ -118,7 +139,7 @@ public final class ItmResource extends AbstractStruct implements Resource, HasAd
           {"None", "Critical item", "Two-handed", "Droppable", "Displayable",
            "Cursed", "Not copyable", "Magical", "Left-handed", "Silver", "Cold iron", "Off-handed",
            "Conversable", "EE: Fake two-handed", "EE: Forbid off-hand weapon", "", "EE: Adamantine",
-           "", "", "", "", "", "", "", "", "EE/Ex: Undispellable", "EE/Ex: Toggle critical hits"};
+           null, null, null, null, null, null, null, null, "EE/Ex: Undispellable", "EE/Ex: Toggle critical hits"};
   public static final String[] s_flags11 =
           {"None", "Unsellable", "Two-handed", "Droppable", "Displayable",
            "Cursed", "Not copyable", "Magical", "Left-handed", "Silver", "Cold iron", "Steel", "Conversable",
@@ -127,12 +148,12 @@ public final class ItmResource extends AbstractStruct implements Resource, HasAd
           {"None", "Unsellable", "Two-handed", "Droppable", "Displayable",
            "Cursed", "Not copyable", "Magical", "Left-handed", "Silver", "Cold iron", "Steel", "Conversable",
            "EE: Fake two-handed", "EE: Forbid off-hand weapon", "Usable in inventory", "EE: Adamantine",
-           "", "", "", "", "", "", "", "", "EE/Ex: Undispellable", "EE/Ex: Toggle critical hits"};
+           null, null, null, null, null, null, null, null, "EE/Ex: Undispellable", "EE/Ex: Toggle critical hits"};
   public static final String[] s_usability =
           {"None",
            "Chaotic;Includes Chaotic Good, Chaotic Neutral and Chaotic Evil",
            "Evil;Includes Lawful Evil, Neutral Evil and Chaotic Evil",
-            "Good;Includes Lawful Good, Neutral Good and Chaotic Good",
+           "Good;Includes Lawful Good, Neutral Good and Chaotic Good",
            "... Neutral;Includes Lawful Neutral, True Neutral and Chaotic Neutral",
            "Lawful;Includes Lawful Good, Lawful Neutral and Lawful Evil",
            "Neutral ...;Includes Neutral Good, True Neutral and Neutral Evil",
@@ -160,14 +181,14 @@ public final class ItmResource extends AbstractStruct implements Resource, HasAd
   public static final String[] s_usability20 =
           {"None", "Barbarian", "Bard", "Cleric", "Druid",
            "Fighter", "Monk", "Paladin", "Ranger",
-           "Rogue", "Sorcerer", "Wizard", "",
+           "Rogue", "Sorcerer", "Wizard", null,
            "Chaotic;Includes Chaotic Good, Chaotic Neutral and Chaotic Evil",
            "Evil;Includes Lawful Evil, Neutral Evil and Chaotic Evil",
            "Good;Includes Lawful Good, Neutral Good and Chaotic Good",
            "... Neutral;Includes Lawful Neutral, True Neutral and Chaotic Neutral",
            "Lawful;Includes Lawful Good, Lawful Neutral and Lawful Evil",
            "Neutral ...;Includes Neutral Good, True Neutral and Neutral Evil",
-           "", "", "", "", "", "Elf",
+           null, null, null, null, null, "Elf",
            "Dwarf", "Half-elf", "Halfling", "Human", "Gnome"
           };
   public static final String[] s_kituse1 =
@@ -182,56 +203,6 @@ public final class ItmResource extends AbstractStruct implements Resource, HasAd
   public static final String[] s_kituse4 =
           {"None", "Berserker", "Wizard slayer", "Kensai", "Cavalier", "Inquisitor",
            "Undead hunter", "Abjurer", "Conjurer"};
-  public static final String[] s_tag = {"  ", "2A", "3A", "4A", "2W", "3W", "4W", "AX", "BW",
-                                        "CB", "CL", "D1", "D2", "D3", "D4", "DD", "FL", "FS",
-                                        "H0", "H1", "H2", "H3", "H4", "H5", "H6", "HB", "MC",
-                                        "MS", "QS", "S1", "S2", "S3", "SC", "SL", "SP", "SS", "WH"};
-  public static final String[] s_anim =
-          {"None", "Leather armor", "Chain mail", "Plate mail",
-           "Mage robe 1", "Mage robe 2", "Mage robe 3",
-           "Battle axe", "Bow", "Crossbow", "Club",
-           "Buckler", "Small shield", "Medium shield", "Large shield",
-           "Dagger", "Flail", "Flaming sword",
-           "Helmet 1", "Helmet 2", "Helmet 3", "Helmet 4", "Helmet 5", "Helmet 6", "Helmet 7",
-           "Halberd", "Mace", "Morning star", "Quarterstaff",
-           "Long sword", "Two-handed sword", "Katana", "Scimitar",
-           "Sling", "Spear", "Short sword", "War hammer"
-          };
-  public static final String[] s_tag11 = {"  ", "AX", "CB", "CL", "DD", "S1", "WH"};
-  public static final String[] s_anim11 = {"None", "Axe", "Crossbow", "Club", "Dagger",
-                                           "Sword", "Hammer"};
-  public static final String[] s_tag_1pp = {"  ", "2A", "3A", "4A", "2W", "3W", "4W", "AX",
-                                            "BS", "BW", "C0", "C1", "C2", "C3", "C4", "C5",
-                                            "C6", "C7", "CB", "CL", "D1", "D2", "D3", "D4",
-                                            "DD", "F0", "F1", "F2", "F3",
-                                            "FL", "FS", "GS",
-                                            "H0", "H1", "H2", "H3", "H4", "H5", "H6", "HB",
-                                            "J0", "J1", "J2", "J3", "J4", "J5", "J6", "J7",
-                                            "J8", "J9", "JA", "JB", "JC", "M2", "MC",
-                                            "MS", "Q2", "Q3", "Q4",
-                                            "QS", "S0", "S1", "S2", "S3", "SC", "SL", "SP",
-                                            "SS", "WH", "YW", "ZW"};
-  public static final String[] s_anim_1pp =
-          {"None", "Leather armor", "Chain mail", "Plate mail",
-           "Mage robe 1", "Mage robe 2", "Mage robe 3",
-           "Battle axe", "Bow?", "Bow",
-           "Small shield (alternate 1)", "Medium shield (alternate 1)", "Large shield (alternate 1)",
-           "Medium shield (alternate 2)", "Small shield (alternate 2)", "Large shield (alternate 2)",
-           "Large shield (alternate 3)", "Medium shield (alternate 3)",
-           "Crossbow", "Club",
-           "Buckler", "Small shield", "Medium shield", "Large shield",
-           "Dagger",
-           "Flail (alternate 1)", "Flail (alternate 2)", "Flaming sword (blue)", "Flail (alternate 3",
-           "Flail", "Flaming sword", "Glowing staff",
-           "Helmet 1", "Helmet 2", "Helmet 3", "Helmet 4", "Helmet 5", "Helmet 6", "Helmet 7",
-           "Halberd",
-           "Helmet 8", "Helmet 9", "Helmet 10", "Helmet 11", "Helmet 12", "Helmet 13", "Helmet 14",
-           "Helmet 15", "Helmet 16", "Helmet 17", "Helmet 18", "Circlet", "Helmet 20",
-           "Mace (alternate)", "Mace", "Morning star",
-           "Quarterstaff (alternate 1)", "Quarterstaff (alternate 2)", "Quarterstaff (alternate 3)",
-           "Quarterstaff", "Bastard sword", "Long sword", "Two-handed sword", "Katana", "Scimitar",
-           "Sling", "Spear", "Short sword", "War hammer", "Wings?", "Feathered wings"
-          };
 
   private StructHexViewer hexViewer;
 
@@ -331,8 +302,7 @@ public final class ItmResource extends AbstractStruct implements Resource, HasAd
   public void write(OutputStream os) throws IOException
   {
     super.write(os);
-    for (int i = 0; i < getFieldCount(); i++) {
-      Object o = getField(i);
+    for (final StructEntry o : getFields()) {
       if (o instanceof Ability) {
         Ability a = (Ability)o;
         a.writeEffects(os);
@@ -352,16 +322,14 @@ public final class ItmResource extends AbstractStruct implements Resource, HasAd
   protected void datatypeAdded(AddRemovable datatype)
   {
     if (datatype instanceof Effect) {
-      for (int i = 0; i < getFieldCount(); i++) {
-        Object o = getField(i);
+      for (final StructEntry o : getFields()) {
         if (o instanceof Ability)
           ((Ability)o).incEffectsIndex(1);
       }
     }
     else if (datatype instanceof Ability) {
       int effect_count = ((SectionCount)getAttribute(ITM_NUM_GLOBAL_EFFECTS)).getValue();
-      for (int i = 0; i < getFieldCount(); i++) {
-        Object o = getField(i);
+      for (final StructEntry o : getFields()) {
         if (o instanceof Ability) {
           Ability ability = (Ability)o;
           ability.setEffectsIndex(effect_count);
@@ -378,33 +346,21 @@ public final class ItmResource extends AbstractStruct implements Resource, HasAd
   protected void datatypeAddedInChild(AbstractStruct child, AddRemovable datatype)
   {
     super.datatypeAddedInChild(child, datatype);
-    if (child instanceof Ability && datatype instanceof Effect) {
-      int index = getIndexOf(child) + 1;
-      while (index < getFieldCount()) {
-        StructEntry se = getField(index++);
-        if (se instanceof Ability)
-          ((Ability)se).incEffectsIndex(1);
-      }
-    }
-    if (hexViewer != null) {
-      hexViewer.dataModified();
-    }
+    incAbilityEffects(child, datatype, 1);
   }
 
   @Override
   protected void datatypeRemoved(AddRemovable datatype)
   {
     if (datatype instanceof Effect) {
-      for (int i = 0; i < getFieldCount(); i++) {
-        Object o = getField(i);
+      for (final StructEntry o : getFields()) {
         if (o instanceof Ability)
           ((Ability)o).incEffectsIndex(-1);
       }
     }
     else if (datatype instanceof Ability) {
       int effect_count = ((SectionCount)getAttribute(ITM_NUM_GLOBAL_EFFECTS)).getValue();
-      for (int i = 0; i < getFieldCount(); i++) {
-        Object o = getField(i);
+      for (final StructEntry o : getFields()) {
         if (o instanceof Ability) {
           Ability ability = (Ability)o;
           ability.setEffectsIndex(effect_count);
@@ -421,17 +377,7 @@ public final class ItmResource extends AbstractStruct implements Resource, HasAd
   protected void datatypeRemovedInChild(AbstractStruct child, AddRemovable datatype)
   {
     super.datatypeRemovedInChild(child, datatype);
-    if (child instanceof Ability && datatype instanceof Effect) {
-      int index = getIndexOf(child) + 1;
-      while (index < getFieldCount()) {
-        StructEntry se = getField(index++);
-        if (se instanceof Ability)
-          ((Ability)se).incEffectsIndex(-1);
-      }
-    }
-    if (hexViewer != null) {
-      hexViewer.dataModified();
-    }
+    incAbilityEffects(child, datatype, -1);
   }
 
   @Override
@@ -453,23 +399,18 @@ public final class ItmResource extends AbstractStruct implements Resource, HasAd
         addField(new Bitmap(buffer, 28, 2, ITM_CATEGORY, s_categories11));
       }
       addField(new Flag(buffer, 30, 4, ITM_UNUSABLE_BY, s_usability11));
-      addField(new TextBitmap(buffer, 34, 2, ITM_EQUIPPED_APPEARANCE, s_tag11, s_anim11));
+      addField(new TextBitmap(buffer, 34, 2, ITM_EQUIPPED_APPEARANCE, Profile.getEquippedAppearanceMap()));
     }
     else {
       addField(new ResourceRef(buffer, 16, ITM_USED_UP_ITEM, "ITM"));
-      addField(new Flag(buffer, 24, 4, ITM_FLAGS, s_flags));
+      addField(new Flag(buffer, 24, 4, ITM_FLAGS, IdsMapCache.getUpdatedIdsFlags(s_flags, "ITEMFLAG.IDS", 4, false, false)));
       addField(new Bitmap(buffer, 28, 2, ITM_CATEGORY, s_categories));
       if (version.toString().equalsIgnoreCase("V2.0")) {
         addField(new Flag(buffer, 30, 4, ITM_UNUSABLE_BY, s_usability20));
       } else {
         addField(new Flag(buffer, 30, 4, ITM_UNUSABLE_BY, s_usability));
       }
-      if (Profile.isEnhancedEdition()) {
-        addField(new TextBitmap(buffer, 34, 2, ITM_EQUIPPED_APPEARANCE, s_tag_1pp, s_anim_1pp));
-      }
-      else {
-        addField(new TextBitmap(buffer, 34, 2, ITM_EQUIPPED_APPEARANCE, s_tag, s_anim));
-      }
+      addField(new TextBitmap(buffer, 34, 2, ITM_EQUIPPED_APPEARANCE, Profile.getEquippedAppearanceMap()));
     }
     addField(new DecNumber(buffer, 36, 2, ITM_MIN_LEVEL));
     addField(new DecNumber(buffer, 38, 2, ITM_MIN_STRENGTH));
@@ -508,11 +449,7 @@ public final class ItmResource extends AbstractStruct implements Resource, HasAd
     if (version.toString().equalsIgnoreCase("V1.1")) {
       addField(new ResourceRef(buffer, 88, ITM_PICK_UP_SOUND, "WAV"));
     } else {
-      if (Profile.isEnhancedEdition()) {
-        addField(new ResourceRef(buffer, 88, ITM_DESCRIPTION_IMAGE, new String[]{"BAM", "BMP"}));
-      } else {
-        addField(new ResourceRef(buffer, 88, ITM_DESCRIPTION_IMAGE, "BAM"));
-      }
+      addField(new ResourceRef(buffer, 88, ITM_DESCRIPTION_IMAGE, "BAM"));
     }
     addField(new DecNumber(buffer, 96, 4, ITM_ENCHANTMENT));
     SectionOffset abil_offset = new SectionOffset(buffer, 100, ITM_OFFSET_ABILITIES,
@@ -560,9 +497,27 @@ public final class ItmResource extends AbstractStruct implements Resource, HasAd
     return Math.max(offset, offset2);
   }
 
+  private void incAbilityEffects(StructEntry child, AddRemovable datatype, int value)
+  {
+    if (child instanceof Ability && datatype instanceof Effect) {
+      final List<StructEntry> fields = getFields();
+      final ListIterator<StructEntry> it = fields.listIterator(fields.indexOf(child) + 1);
+      while (it.hasNext()) {
+        final StructEntry se = it.next();
+        if (se instanceof Ability) {
+          ((Ability)se).incEffectsIndex(value);
+        }
+      }
+    }
+    if (hexViewer != null) {
+      hexViewer.dataModified();
+    }
+  }
 
-  // Called by "Extended Search"
-  // Checks whether the specified resource entry matches all available search options.
+  /**
+   * Called by "Extended Search"
+   * Checks whether the specified resource entry matches all available search options.
+   */
   public static boolean matchSearchOptions(ResourceEntry entry, SearchOptions searchOptions)
   {
     if (entry != null && searchOptions != null) {
@@ -807,4 +762,3 @@ public final class ItmResource extends AbstractStruct implements Resource, HasAd
     return false;
   }
 }
-

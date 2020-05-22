@@ -5,6 +5,9 @@
 package org.infinity.util;
 
 import java.awt.Dimension;
+import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.Graphics;
 import java.nio.charset.Charset;
 import java.util.Comparator;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -12,6 +15,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import javax.swing.JComponent;
+
+import org.infinity.NearInfinity;
 
 /**
  * A general-purpose class containing useful function not fitting elsewhere.
@@ -27,6 +32,13 @@ public class Misc
 
   /** Returns the line separator string which is used by the current operating system. */
   public static final String LINE_SEPARATOR = System.getProperty("line.separator");
+
+  /** Can be used to slightly expand dialog message strings to force a bigger initial dialog width. */
+  public static final String MSG_EXPAND_SMALL = "        \t";
+  /** Can be used to expand dialog message strings to force a bigger initial dialog width. */
+  public static final String MSG_EXPAND_MEDIUM = "                \t";
+  /** Can be used to greatly expand dialog message strings to force a bigger initial dialog width. */
+  public static final String MSG_EXPAND_LARGE = "                                \t";
 
   /**
    * Returns a comparator that compares the string representation of the specified objects
@@ -303,6 +315,126 @@ public class Misc
     return d;
   }
 
+  /**
+   * Returns height of a font for the graphics context g.
+   * @param g The graphics context. Specify {@code null} to use graphics context of main window.
+   * @param font The font to use. Specify {@code null} to use current font of the specified graphics context.
+   * @return Font height in pixels.
+   */
+  public static int getFontHeight(Graphics g, Font font) {
+    if (g == null)
+      g = NearInfinity.getInstance().getGraphics();
+    if (g != null) {
+      FontMetrics m = g.getFontMetrics((font != null) ? font : g.getFont());
+      if (m != null) {
+        return m.getHeight();
+      }
+    }
+    return 0;
+  }
+
+  /**
+   * Returns the specified font scaled to the global font scale value.
+   * @param font The font to scale.
+   * @return The scaled font.
+   */
+  public static Font getScaledFont(Font font)
+  {
+    int scale = (NearInfinity.getInstance() != null) ? NearInfinity.getInstance().getGlobalFontSize() : 100;
+    return getScaledFont(font, scale);
+  }
+
+  /**
+   * Returns the specified font scaled to the specified scale value.
+   * @param font The font to scale.
+   * @param scale The scale factor (in percent).
+   * @return The scaled font.
+   */
+  public static Font getScaledFont(Font font, int scale)
+  {
+    Font ret = null;
+    if (font != null) {
+      ret = (scale != 100) ? font.deriveFont(font.getSize2D() * scale / 100.0f) : font;
+    }
+    return ret;
+  }
+
+  /**
+   * Returns the specified Dimension structure scaled to the global font scale value.
+   * @param dim The Dimension structure to scale.
+   * @return The scaled Dimension structure.
+   */
+  public static Dimension getScaledDimension(Dimension dim)
+  {
+    Dimension ret = null;
+    if (dim != null) {
+      int scale = 100;
+      if (NearInfinity.getInstance() != null) {
+        scale = NearInfinity.getInstance().getGlobalFontSize();
+      }
+      ret = (scale != 100) ? new Dimension(dim.width * scale / 100, dim.height * scale / 100) : dim;
+    }
+    return ret;
+  }
+
+  /**
+   * Returns the specified numeric value scaled to the global font scale value.
+   * @param value The numeric value to scale.
+   * @return The scaled value.
+   */
+  public static float getScaledValue(float value)
+  {
+    float scale = (NearInfinity.getInstance() != null) ? NearInfinity.getInstance().getGlobalFontSize() : 100.0f;
+    return value * scale / 100.0f;
+  }
+
+  /**
+   * Returns the specified numeric value scaled to the global font scale value.
+   * @param value The numeric value to scale.
+   * @return The scaled value.
+   */
+  public static int getScaledValue(int value)
+  {
+    int scale = (NearInfinity.getInstance() != null) ? NearInfinity.getInstance().getGlobalFontSize() : 100;
+    return value * scale / 100;
+  }
+
+  /**
+   * Attempts to format the specified symbolic name, so that it becomes easier to
+   * read. E.g. by replaceing underscores by spaces, or using an appropriate mix of upper/lower case
+   * characters.
+   * @param symbol The symbolic name to convert.
+   * @return A prettified version of the symbolic name.
+   */
+  public static String prettifySymbol(String symbol)
+  {
+    if (symbol != null) {
+      StringBuilder sb = new StringBuilder(symbol);
+      boolean upper = true;
+      for (int idx = 0, len = sb.length(); idx < len; idx++) {
+        char ch = sb.charAt(idx);
+        if (upper) {
+          ch = Character.toUpperCase(ch);
+          upper = false;
+        } else {
+          ch = Character.toLowerCase(ch);
+        }
+        if (" ,-_".indexOf(ch) >= 0) {
+          if (ch == '_') ch =  ' ';
+          if (ch == '-') {
+            sb.insert(idx, " -");
+            ch = ' ';
+            idx += 2;
+            len += 2;
+          }
+          upper = true;
+        }
+        sb.setCharAt(idx, ch);
+      }
+      symbol = sb.toString();
+    }
+    return symbol;
+  }
 
   // Contains static functions only
   private Misc() {}

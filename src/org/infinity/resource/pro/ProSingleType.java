@@ -47,10 +47,10 @@ public final class ProSingleType extends AbstractStruct implements AddRemovable
   public static final String[] s_trail = {"No flags set", "Draw at target", "Draw at source"};
 
   static {
-    m_facetarget.put(new Long(1), "Do not face target");
-    m_facetarget.put(new Long(5), "Mirrored east (reduced)");
-    m_facetarget.put(new Long(9), "Mirrored east (full)");
-    m_facetarget.put(new Long(16), "Not mirrored (full)");
+    m_facetarget.put(1L, "Do not face target");
+    m_facetarget.put(5L, "Mirrored east (reduced)");
+    m_facetarget.put(9L, "Mirrored east (full)");
+    m_facetarget.put(16L, "Not mirrored (full)");
   }
 
 
@@ -78,6 +78,8 @@ public final class ProSingleType extends AbstractStruct implements AddRemovable
   @Override
   public int read(ByteBuffer buffer, int offset) throws Exception
   {
+    final String[] s_types = new String[]{"VEF", "VVC", "BAM"};
+
     addField(new Flag(buffer, offset, 4, PRO_SINGLE_FLAGS, s_flags));
     addField(new ResourceRef(buffer, offset + 4, PRO_SINGLE_PRO_ANIMATION, "BAM"));
     addField(new ResourceRef(buffer, offset + 12, PRO_SINGLE_SHADOW_ANIMATION, "BAM"));
@@ -98,7 +100,7 @@ public final class ProSingleType extends AbstractStruct implements AddRemovable
     addField(new IdsBitmap(buffer, offset + 52, 2, PRO_SINGLE_SMOKE_ANIMATION, "ANIMATE.IDS"));
     for (int i = 0; i < 3; i++) {
       addField(new ResourceRef(buffer, offset + 54 + (i * 8),
-                               String.format(PRO_SINGLE_TRAILING_ANIMATION_FMT, i+1), "BAM"));
+                               String.format(PRO_SINGLE_TRAILING_ANIMATION_FMT, i+1), s_types));
     }
     for (int i = 0; i < 3; i++) {
       addField(new DecNumber(buffer, offset + 78 + (i * 2), 2,

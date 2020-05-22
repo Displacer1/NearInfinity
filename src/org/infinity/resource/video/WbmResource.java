@@ -5,6 +5,7 @@
 package org.infinity.resource.video;
 
 import java.awt.BorderLayout;
+import java.awt.Component;
 import java.awt.Desktop;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
@@ -27,6 +28,7 @@ import org.infinity.gui.ButtonPanel;
 import org.infinity.gui.ViewerUtil;
 import org.infinity.gui.WindowBlocker;
 import org.infinity.resource.Closeable;
+import org.infinity.resource.Referenceable;
 import org.infinity.resource.Resource;
 import org.infinity.resource.ResourceFactory;
 import org.infinity.resource.ViewableContainer;
@@ -37,7 +39,7 @@ import org.infinity.util.FileDeletionHook;
 import org.infinity.util.io.FileManager;
 import org.infinity.util.io.StreamUtils;
 
-public final class WbmResource implements Resource, Closeable, ActionListener
+public final class WbmResource implements Resource, Closeable, Referenceable, ActionListener
 {
   private final ResourceEntry entry;
   private final ButtonPanel buttonPanel = new ButtonPanel();
@@ -58,7 +60,7 @@ public final class WbmResource implements Resource, Closeable, ActionListener
   public void actionPerformed(ActionEvent event)
   {
     if (buttonPanel.getControlByType(ButtonPanel.Control.FIND_REFERENCES) == event.getSource()) {
-      new ReferenceSearcher(entry, panel.getTopLevelAncestor());
+      searchReferences(panel.getTopLevelAncestor());
     } else if (buttonPanel.getControlByType(ButtonPanel.Control.EXPORT_BUTTON) == event.getSource()) {
       ResourceFactory.exportResource(entry,panel.getTopLevelAncestor());
     } else if (event.getSource() == bPlayExternal) {
@@ -114,6 +116,22 @@ public final class WbmResource implements Resource, Closeable, ActionListener
 
 // --------------------- End Interface Closeable ---------------------
 
+//--------------------- Begin Interface Referenceable ---------------------
+
+  @Override
+  public boolean isReferenceable()
+  {
+    return true;
+  }
+
+  @Override
+  public void searchReferences(Component parent)
+  {
+    new ReferenceSearcher(entry, parent);
+  }
+
+//--------------------- End Interface Referenceable ---------------------
+
 // --------------------- Begin Interface Viewable ---------------------
 
   @Override
@@ -149,18 +167,12 @@ public final class WbmResource implements Resource, Closeable, ActionListener
       retVal = ((FileResourceEntry)entry).getActualPath();
       isTempFile = false;
     } else {
-      String fileName = entry.getResourceName();
-      String fileBase, fileExt;
-      int p = fileName.lastIndexOf('.');
-      if (p > 0) {
-        fileBase = fileName.substring(0, p);
-        fileExt = fileName.substring(p);
-      } else {
-        fileBase = fileName;
-        fileExt = ".wbm";
-      }
+      String fileBase = entry.getResourceRef();
+      String fileExt = entry.getExtension();
+      if (fileExt.isEmpty())
+        fileExt = "wbm";
       try {
-        Path outFile = Files.createTempFile(fileBase + "-", fileExt);
+        Path outFile = Files.createTempFile(fileBase + "-", "." + fileExt);
         if (Files.isRegularFile(outFile)) {
           try (InputStream is = entry.getResourceDataAsStream()) {
             try (OutputStream os = StreamUtils.getOutputStream(outFile, true)) {

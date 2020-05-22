@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2018 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.gui;
@@ -57,6 +57,7 @@ import org.infinity.resource.Profile;
 import org.infinity.search.SearchClient;
 import org.infinity.search.SearchMaster;
 import org.infinity.search.StringReferenceSearcher;
+import org.infinity.util.Misc;
 import org.infinity.util.StringTable;
 import org.infinity.util.io.FileManager;
 
@@ -101,11 +102,6 @@ public class StringEditor extends ChildFrame implements SearchClient
 
   public StringEditor()
   {
-    this(0);
-  }
-
-  public StringEditor(int shownIndex)
-  {
     super(getWindowTitle(StringTable.Type.MALE));
 
     String msg = "Make sure you have a backup of ";
@@ -116,7 +112,7 @@ public class StringEditor extends ChildFrame implements SearchClient
     msg += ".";
     JOptionPane.showMessageDialog(NearInfinity.getInstance(), msg, "Warning", JOptionPane.WARNING_MESSAGE);
 
-    initUI(shownIndex);
+    initUI();
   }
 
   @Override
@@ -188,13 +184,14 @@ public class StringEditor extends ChildFrame implements SearchClient
     }
   }
 
-  private void initUI(int shownIndex)
+  private void initUI()
   {
     setIconImage(Icons.getIcon(Icons.ICON_EDIT_16).getImage());
 
+    table.setFont(Misc.getScaledFont(BrowserMenuBar.getInstance().getScriptFont()));
+    table.setRowHeight(table.getFontMetrics(table.getFont()).getHeight() + 1);
     table.getSelectionModel().setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
     table.getSelectionModel().addListSelectionListener(listeners);
-    table.setFont(BrowserMenuBar.getInstance().getScriptFont());
     table.getTableHeader().setReorderingAllowed(false);
     table.setAutoResizeMode(JTable.AUTO_RESIZE_NEXT_COLUMN);
     JScrollPane spTable = new JScrollPane(table);
@@ -204,6 +201,7 @@ public class StringEditor extends ChildFrame implements SearchClient
     tfStrref.addActionListener(listeners);
     if (BrowserMenuBar.getInstance().getTlkSyntaxHighlightingEnabled()) {
       taText.applyExtendedSettings(InfinityTextArea.Language.TLK, null);
+      taText.setFont(Misc.getScaledFont(taText.getFont()));
     }
     taText.setMargin(new Insets(3, 3, 3, 3));
     taText.setLineWrap(true);
@@ -317,8 +315,6 @@ public class StringEditor extends ChildFrame implements SearchClient
 
     splitCenter.setDividerLocation(splitCenter.getWidth() / 2);
     splitAttrib.setDividerLocation(splitAttrib.getHeight() / 3);
-
-    showEntry(shownIndex);
   }
 
   private void updateStringTableUI(int tabIndex)
@@ -441,6 +437,18 @@ public class StringEditor extends ChildFrame implements SearchClient
     selectedIndex = index;
     selectedEntry = entry;
     selectedEntry.addTableModelListener(listeners);
+  }
+
+  /**
+   * If string editor window already opened, focus it and show specified value in
+   * it, otherwise creates new window and show specified value.
+   *
+   * @param value String index to show in the editor
+   */
+  public static void edit(int value)
+  {
+    final StringEditor editor = ChildFrame.show(StringEditor.class, () -> new StringEditor());
+    editor.showEntry(StringTable.Type.MALE, StringTable.getTranslatedIndex(value));
   }
 
   private void updateEntry(StringTable.StringEntry entry)
@@ -632,7 +640,7 @@ public class StringEditor extends ChildFrame implements SearchClient
     return true;
   }
 
-  // Undoes the last add/remove action if available
+  /** Undoes the last add/remove action if available. */
   private boolean undo()
   {
     if (!undoStack.isEmpty()) {
@@ -690,7 +698,7 @@ public class StringEditor extends ChildFrame implements SearchClient
     JOptionPane.showMessageDialog(this, msg, "Revert string tables", JOptionPane.INFORMATION_MESSAGE);
   }
 
-  // Save changes to all available string tables
+  /** Save changes to all available string tables. */
   private void save(boolean interactive)
   {
     boolean isSync = bSync.isEnabled();
@@ -1034,7 +1042,7 @@ public class StringEditor extends ChildFrame implements SearchClient
 
       StringTable.StringEntry entry = StringTable.getStringEntry(getSelectedDialogType(), index);
       entry.fillList(index);
-      return entry.getField(selectedRow).toString();
+      return entry.getFields().get(selectedRow).toString();
     }
 
     @Override
@@ -1044,8 +1052,8 @@ public class StringEditor extends ChildFrame implements SearchClient
     }
   }
 
-  // A simple structure for holding data needed to undo an add/remove operation
-  private class UndoAction
+  /** A simple structure for holding data needed to undo an add/remove operation. */
+  private final class UndoAction
   {
     private final StringTable.StringEntry entryMale;
     private final StringTable.StringEntry entryFemale;
@@ -1078,8 +1086,8 @@ public class StringEditor extends ChildFrame implements SearchClient
     }
   }
 
-  // A general-purpose progress monitor
-  private class ProgressTracker extends StringTable.ProgressCallback
+  /** A general-purpose progress monitor. */
+  private final class ProgressTracker extends StringTable.ProgressCallback
   {
     private final String title;
     private final String msgSuccess;

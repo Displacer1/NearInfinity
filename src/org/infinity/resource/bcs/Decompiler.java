@@ -41,32 +41,6 @@ public final class Decompiler
   private Signatures triggers, actions;
   private boolean triggerOverrideEnabled;
 
-  public Decompiler(ResourceEntry bcs, boolean generateErrors) throws Exception
-  {
-    this(bcs, ScriptType.BCS, generateErrors);
-  }
-
-  public Decompiler(ResourceEntry bcs, ScriptType type, boolean generateErrors) throws Exception
-  {
-    if (bcs == null) {
-      throw new NullPointerException();
-    }
-    if (BrowserMenuBar.getInstance() != null) {
-      if (BrowserMenuBar.getInstance().getBcsAutoIndentEnabled()) {
-        indent = BrowserMenuBar.getInstance().getBcsIndent();
-      } else {
-        indent = "";
-      }
-    }
-    this.scriptType = type;
-    this.generateErrors = generateErrors;
-    this.generateComments = true;
-    this.generateResUsed = true;
-    ByteBuffer buffer = bcs.getResourceBuffer();
-    this.code = StreamUtils.readString(buffer, buffer.limit());
-    setTriggerOverrideEnabled(this.scriptType != ScriptType.TRIGGER);
-  }
-
   public Decompiler(String code, boolean generateErrors)
   {
     this(code, ScriptType.BCS, generateErrors);
@@ -1063,15 +1037,13 @@ public final class Decompiler
   {
     StringBuilder sb = new StringBuilder();
 
-    if (enable && (isGenerateComments() || isGenerateResourcesUsed()) &&
-        BrowserMenuBar.getInstance().checkScriptNames()) {
+    if (enable && (isGenerateComments() || isGenerateResourcesUsed())) {
       ResourceEntry entry = null;
       String[] types = param.getResourceType();
       for (String type: types) {
         if (type.equals("TLK")) {
           int intValue = (int)value;
           if (isGenerateComments()) {
-//            sb.append(getNormalizedString(StringResource.getStringRef(intValue)));
             sb.append(getNormalizedString(StringTable.getStringRef(intValue)));
           }
           if (isGenerateResourcesUsed()) {
@@ -1102,8 +1074,7 @@ public final class Decompiler
   {
     StringBuilder sb = new StringBuilder();
 
-    if (enable && (isGenerateComments() || isGenerateResourcesUsed()) &&
-        BrowserMenuBar.getInstance().checkScriptNames() && !value.isEmpty()) {
+    if (enable && (isGenerateComments() || isGenerateResourcesUsed()) && !value.isEmpty()) {
       String[] types = param.getResourceType();
       for (String type: types) {
         if (type.equals(Signatures.Function.Parameter.RESTYPE_SCRIPT) &&
@@ -1173,7 +1144,7 @@ public final class Decompiler
   {
     StringBuilder sb = new StringBuilder();
 
-    if (enable && isGenerateComments() && BrowserMenuBar.getInstance().checkScriptNames()) {
+    if (enable && isGenerateComments()) {
       if (!object.name.isEmpty()) {
         Set<ResourceEntry> set = CreMapCache.getCreForScriptName(object.name);
         if (set != null && !set.isEmpty()) {

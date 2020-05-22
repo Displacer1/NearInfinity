@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.graphics;
@@ -69,20 +69,45 @@ import org.infinity.gui.hexview.GenericHexViewer;
 import org.infinity.icon.Icons;
 import org.infinity.resource.Closeable;
 import org.infinity.resource.Profile;
+import org.infinity.resource.Referenceable;
 import org.infinity.resource.Resource;
 import org.infinity.resource.ResourceFactory;
 import org.infinity.resource.ViewableContainer;
 import org.infinity.resource.Writeable;
-import org.infinity.resource.key.BIFFResourceEntry;
-import org.infinity.resource.key.FileResourceEntry;
+import org.infinity.resource.chu.ChuResource;
+import org.infinity.resource.cre.CreResource;
+import org.infinity.resource.itm.ItmResource;
 import org.infinity.resource.key.ResourceEntry;
+import org.infinity.resource.spl.SplResource;
 import org.infinity.search.ReferenceSearcher;
 import org.infinity.util.DynamicArray;
 import org.infinity.util.IntegerHashMap;
 import org.infinity.util.io.FileManager;
 import org.infinity.util.io.StreamUtils;
 
-public class BamResource implements Resource, Closeable, Writeable, ActionListener,
+/**
+ * This resource describes animated graphics. Such files are used for animations
+ * (both {@link CreResource creature} animations, {@link ItmResource item} and
+ * {@link SplResource spell} animations) and {@link ChuResource interactive GUI
+ * elements} (e.g. buttons) and for logical collections of images (e.g. fonts).
+ * BAM files can contain multiple sequences of animations, up to a limit of 255.
+ * <p>
+ * While the BAM format allows the dimensions of a frame to be very large, the
+ * engine will only show frames up to a certain size. This maximum size varies
+ * with the {@link Profile.Engine version of the engine}:
+ * <ul>
+ * <li>BG1: Unknown</li>
+ * <li>BG2: 256*256</li>
+ * <li>PST: Unknown (greater than 256*256)</li>
+ * <li>IWD1: Unknown</li>
+ * <li>IWD2: Unknown</li>
+ * <li>BGEE: Unknown (1024*1024 or greater)</li>
+ * </ul>
+ *
+ * @see <a href="https://gibberlings3.github.io/iesdp/file_formats/ie_formats/bam_v1.htm">
+ * https://gibberlings3.github.io/iesdp/file_formats/ie_formats/bam_v1.htm</a>
+ */
+public class BamResource implements Resource, Closeable, Writeable, Referenceable, ActionListener,
                                     PropertyChangeListener, ChangeListener, IDataChangedListener
 {
   private static final Color TransparentColor = new Color(0, true);
@@ -129,7 +154,6 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
       bamControl.setMode(BamDecoder.BamControl.Mode.SHARED);
       if (bamControl instanceof BamV1Decoder.BamV1Control) {
         ((BamV1Decoder.BamV1Control)bamControl).setTransparencyEnabled(transparencyEnabled);
-        ((BamV1Decoder.BamV1Control)bamControl).setTransparencyMode(BamV1Decoder.TransparencyMode.NORMAL);
       }
     } catch (Throwable t) {
       t.printStackTrace();
@@ -140,29 +164,12 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
 
 //--------------------- Begin Interface Closeable ---------------------
 
- @Override
- public void close() throws Exception
- {
-   if (isRawModified()) {
-     Path output = null;
-     if (entry instanceof BIFFResourceEntry) {
-       output = FileManager.query(Profile.getRootFolders(), Profile.getOverrideFolderName(), entry.toString());
-     } else if (entry instanceof FileResourceEntry) {
-       output = entry.getActualPath();
-     }
-
-     if (output != null) {
-       final String options[] = {"Save changes", "Discard changes", "Cancel"};
-       int result = JOptionPane.showOptionDialog(panelMain, "Save changes to " + output.toString(),
-                                                 "Resource changed", JOptionPane.YES_NO_CANCEL_OPTION,
-                                                 JOptionPane.WARNING_MESSAGE, null, options, options[0]);
-       if (result == 0) {
-         ResourceFactory.saveResource(this, panelMain.getTopLevelAncestor());
-       } else if (result != 1) {
-         throw new Exception("Save aborted");
-       }
-     }
-   }
+  @Override
+  public void close() throws Exception
+  {
+    if (isRawModified()) {
+      ResourceFactory.closeResource(this, entry, panelMain);
+    }
  }
 
 //--------------------- End Interface Closeable ---------------------
@@ -176,6 +183,22 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
  }
 
 //--------------------- End Interface Writeable ---------------------
+
+//--------------------- Begin Interface Referenceable ---------------------
+
+ @Override
+ public boolean isReferenceable()
+ {
+   return true;
+ }
+
+ @Override
+ public void searchReferences(Component parent)
+ {
+   new ReferenceSearcher(entry, parent);
+ }
+
+//--------------------- End Interface Referenceable ---------------------
 
 //--------------------- Begin Interface ActionListener ---------------------
 
@@ -222,7 +245,7 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
         }
       }
     } else if (buttonPanel.getControlByType(ButtonPanel.Control.FIND_REFERENCES) == event.getSource()) {
-      new ReferenceSearcher(entry, panelMain.getTopLevelAncestor());
+      searchReferences(panelMain.getTopLevelAncestor());
     } else if (buttonPanel.getControlByType(ButtonPanel.Control.SAVE) == event.getSource()) {
       if (ResourceFactory.saveResource(this, panelMain.getTopLevelAncestor())) {
         setRawModified(false);
@@ -251,7 +274,7 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
           // decompress existing BAMC V1 and save as BAM V1
           try {
             ByteBuffer buffer = Compressor.decompress(entry.getResourceBuffer());
-            ResourceFactory.exportResource(entry, buffer, entry.toString(),
+            ResourceFactory.exportResource(entry, buffer, entry.getResourceName(),
                                            panelMain.getTopLevelAncestor());
           } catch (Exception e) {
             e.printStackTrace();
@@ -271,17 +294,17 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
           // compress existing BAM V1 and save as BAMC V1
           try {
             ByteBuffer buffer = Compressor.compress(entry.getResourceBuffer(), "BAMC", "V1  ");
-            ResourceFactory.exportResource(entry, buffer, entry.toString(), panelMain.getTopLevelAncestor());
+            ResourceFactory.exportResource(entry, buffer, entry.getResourceName(), panelMain.getTopLevelAncestor());
           } catch (Exception e) {
             e.printStackTrace();
           }
         }
       }
     } else if (event.getSource() == miExportFramesPNG) {
-      JFileChooser fc = new JFileChooser(Profile.getGameRoot().toFile());
+      JFileChooser fc = new JFileChooser(ResourceFactory.getExportFilePath().toFile());
       fc.setDialogTitle("Export BAM frames");
       fc.setFileSelectionMode(JFileChooser.FILES_ONLY);
-      fc.setSelectedFile(new File(fc.getCurrentDirectory(), entry.toString().replace(".BAM", "")));
+      fc.setSelectedFile(new File(fc.getCurrentDirectory(), entry.getResourceName().replace(".BAM", "")));
 
       // Output graphics format depends on BAM type
       while (fc.getChoosableFileFilters().length > 0) {
@@ -311,13 +334,8 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
     } else if (buttonPanel.getControlByType(Properties) == event.getSource()) {
       showProperties();
     } else if (buttonPanel.getControlByType(BamEdit) == event.getSource()) {
-      ConvertToBam dlg = (ConvertToBam)ChildFrame.getFirstFrame(ConvertToBam.class);
-      if (dlg == null) {
-        dlg = new ConvertToBam(entry);
-      } else {
-        dlg.setVisible(true);
-        dlg.framesImportBam(entry);
-      }
+      final ConvertToBam converter = ChildFrame.show(ConvertToBam.class, () -> new ConvertToBam());
+      converter.framesImportBam(entry);
     }
   }
 
@@ -349,7 +367,7 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
         if (bamData != null) {
           if (bamData.length > 0) {
             ResourceFactory.exportResource(entry, StreamUtils.getByteBuffer(bamData),
-                                           entry.toString(), panelMain.getTopLevelAncestor());
+                                           entry.getResourceName(), panelMain.getTopLevelAncestor());
           } else {
             JOptionPane.showMessageDialog(panelMain.getTopLevelAncestor(),
                                           "Export has been cancelled." + entry, "Information",
@@ -707,7 +725,7 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
     }
   }
 
-  // Shows message box about basic resource properties
+  /** Shows message box about basic resource properties. */
   private void showProperties()
   {
     BamDecoder.BamControl control = decoder.createControl();
@@ -841,7 +859,7 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
         }
         max = decoder.frameCount();
         for (int i = 0; i < decoder.frameCount(); i++) {
-          String fileIndex = String.format("%1$05d", i);
+          String fileIndex = String.format("%05d", i);
           BufferedImage image = null;
           try {
             image = prepareFrameImage(decoder, i);
@@ -871,7 +889,7 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
     // displaying results
     String msg = null;
     if (failCounter == 0 && counter == max) {
-      msg = String.format("All %1$d frames exported successfully.", max);
+      msg = String.format("All %d frames exported successfully.", max);
     } else {
       msg = String.format("%2$d/%1$d frame(s) exported.\n%3$d/%1$d frame(s) skipped.",
                           max, counter, failCounter);
@@ -879,7 +897,7 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
     return msg;
   }
 
-  // Returns a BufferedImage object in the most appropriate format for the current BAM resource
+  /** Returns a BufferedImage object in the most appropriate format for the current BAM resource. */
   private static BufferedImage prepareFrameImage(BamDecoder decoder, int frameIdx)
   {
     BufferedImage image = null;
@@ -906,7 +924,7 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
     return image;
   }
 
-  // Exports frames as graphics, specified by "format"
+  /** Exports frames as graphics, specified by "format". */
   private void exportFrames(Path filePath, String fileBase, String fileExt, String format)
   {
     String msg = null;
@@ -924,7 +942,7 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
     }
   }
 
-  // Checks current BAM (V2 only) for compatibility and shows an appropriate warning or error message
+  /** Checks current BAM (V2 only) for compatibility and shows an appropriate warning or error message. */
   private boolean checkCompatibility(Component parent)
   {
     if (parent == null)
@@ -973,13 +991,13 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
       }
 
       // frame dimensions > 256 pixels
-      if (maxWidth > 256 || maxHeight > 256) {
+      if (!Profile.isEnhancedEdition() && (maxWidth > 256 || maxHeight > 256)) {
         issues.add("- [severe] One or more frames are greater than 256x256 pixels. Those frames may not be visible in certain games.");
         compatibility = Math.max(compatibility, 1);
       }
 
       // semi-transparent pixels
-      if (hasSemiTrans) {
+      if (hasSemiTrans && !(Boolean)Profile.getProperty(Profile.Key.IS_SUPPORTED_BAM_V1_ALPHA)) {
         issues.add("- [medium] One or more frames contain semi-transparent pixels. The transparency information will be lost.");
         compatibility = Math.max(compatibility, 1);
       }
@@ -1012,10 +1030,11 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
     return false;
   }
 
-  // Creates a new BAM V1 or BAMC V1 resource from scratch. DO NOT call directly!
+  /** Creates a new BAM V1 or BAMC V1 resource from scratch. DO NOT call directly!. */
   private byte[] convertToBamV1(boolean compressed) throws Exception
   {
     if (decoder != null) {
+      boolean ignoreAlpha = !(Boolean)Profile.getProperty(Profile.Key.IS_SUPPORTED_BAM_V1_ALPHA);
       BamDecoder.BamControl control = decoder.createControl();
       control.setMode(BamDecoder.BamControl.Mode.INDIVIDUAL);
       // max. supported number of frames and cycles
@@ -1023,7 +1042,7 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
       int cycleCount = Math.min(control.cycleCount(), 255);
 
       // 1. calculating global palette for all frames
-      final int transThreshold = 0x20;
+      final int transThreshold = ignoreAlpha ? 32 : 1;
       boolean[] frameTransparency = new boolean[frameCount];
       boolean hasTransparency = false;
       int totalWidth = 0, totalHeight = 0;
@@ -1058,13 +1077,11 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
       }
       g.dispose();
       int[] chainedImageData = ((DataBufferInt)composedImage.getRaster().getDataBuffer()).getData();
-      int[] palette = ColorConvert.medianCut(chainedImageData, hasTransparency ? 255 : 256, false);
-      int[] hclPalette = new int[palette.length];
-      ColorConvert.toHclPalette(palette, hclPalette);
+      int[] palette = ColorConvert.medianCut(chainedImageData, hasTransparency ? 255 : 256, ignoreAlpha);
       // initializing color cache
       IntegerHashMap<Byte> colorCache = new IntegerHashMap<Byte>(1536);
       for (int i = 0; i < palette.length; i++) {
-        colorCache.put(palette[i] & 0x00ffffff, (byte)i);
+        colorCache.put(palette[i], (byte)i);
       }
       // adding transparent color index to the palette if available
       if (hasTransparency) {
@@ -1099,13 +1116,15 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
                 dstData[dstIdx++] = (byte)cnt;
               } else {
                 // visible pixel
-                Byte colIdx = colorCache.get(srcData[srcIdx] & 0x00ffffff);
+                Byte colIdx = colorCache.get(srcData[srcIdx]);
                 if (colIdx != null) {
                   dstData[dstIdx++] = (byte)(colIdx + colorShift);
                 } else {
-                  int color = ColorConvert.nearestColor(srcData[srcIdx], hclPalette);
-                  dstData[dstIdx++] = (byte)(color + colorShift);
-                  colorCache.put(srcData[srcIdx] & 0x00ffffff, (byte)color);
+                  int color = ColorConvert.nearestColorRGB(srcData[srcIdx], palette, ignoreAlpha);
+                  dstData[dstIdx++] = (byte)(color);
+                  if (color > 0) {
+                    colorCache.put(srcData[srcIdx], (byte)(color - colorShift));
+                  }
                 }
                 srcIdx++;
               }
@@ -1121,13 +1140,15 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
             byte[] dstData = new byte[img.getWidth()*img.getHeight()];
             int idx = 0, max = dstData.length;
             while (idx < max) {
-              Byte colIdx = colorCache.get(srcData[idx] & 0x00ffffff);
+              Byte colIdx = colorCache.get(srcData[idx]);
               if (colIdx != null) {
                 dstData[idx] = (byte)(colIdx + colorShift);
               } else {
-                int color = ColorConvert.nearestColor(srcData[idx], hclPalette);
-                dstData[idx] = (byte)(color + colorShift);
-                colorCache.put(srcData[idx] & 0x00ffffff, (byte)color);
+                int color = ColorConvert.nearestColorRGB(srcData[idx], palette, ignoreAlpha);
+                dstData[idx] = (byte)(color);
+                if (color > 0) {
+                  colorCache.put(srcData[idx], (byte)(color - colorShift));
+                }
               }
               idx++;
             }
@@ -1212,7 +1233,7 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
       }
       frameList.clear(); frameList = null;
       colorCache.clear(); colorCache = null;
-      palette = null; hclPalette = null;
+      palette = null;
 
       // optionally compressing to MOSC V1
       if (compressed) {
@@ -1226,7 +1247,7 @@ public class BamResource implements Resource, Closeable, Writeable, ActionListen
     return null;
   }
 
-  // Starts the worker thread for BAM conversion
+  /** Starts the worker thread for BAM conversion. */
   private void startConversion(boolean compressed)
   {
     exportCompressed = compressed;

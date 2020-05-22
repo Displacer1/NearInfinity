@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.datatype;
@@ -7,8 +7,8 @@ package org.infinity.datatype;
 import java.nio.ByteBuffer;
 import java.util.Locale;
 
+import org.infinity.resource.Profile;
 import org.infinity.resource.ResourceFactory;
-import org.infinity.resource.StructEntry;
 import org.infinity.util.IdsMap;
 import org.infinity.util.IdsMapCache;
 import org.infinity.util.IdsMapEntry;
@@ -37,12 +37,7 @@ public class PriTypeBitmap extends HashBitmap
 
   public PriTypeBitmap(ByteBuffer buffer, int offset, int length, String name)
   {
-    this(null, buffer, offset, length, name);
-  }
-
-  public PriTypeBitmap(StructEntry parent, ByteBuffer buffer, int offset, int length, String name)
-  {
-    super(parent, buffer, offset, length, name, getTypeTable());
+    super(buffer, offset, length, name, getTypeTable());
   }
 
   public static String getTableName()
@@ -52,13 +47,8 @@ public class PriTypeBitmap extends HashBitmap
 
   public static String[] getTypeArray()
   {
-    LongIntegerHashMap<String> map = getTypeTable();
-    long[] keys = map.keys();
-    String[] retVal = new String[keys.length];
-    for (int i = 0; i < keys.length; i++) {
-      retVal[i] = map.get(Long.valueOf(keys[i]));
-    }
-    return retVal;
+    final LongIntegerHashMap<String> map = getTypeTable();
+    return map.values().toArray(new String[map.size()]);
   }
 
   private static synchronized LongIntegerHashMap<String> getTypeTable()
@@ -73,6 +63,10 @@ public class PriTypeBitmap extends HashBitmap
             String label = table.get(row, 0).toUpperCase(Locale.ENGLISH);
             typeMap.put(Long.valueOf(id), label);
           }
+          if (typeMap.size() == 10) {
+            // XXX: Doesn't appear to be listed in unmodded games
+            typeMap.put(Long.valueOf(10L), "WILDMAGE");
+          }
         }
       } else if (ResourceFactory.resourceExists(TableName) && TableName.endsWith(".IDS")) {
         // using SCHOOL.IDS
@@ -85,6 +79,9 @@ public class PriTypeBitmap extends HashBitmap
         // using predefined values
         for (int i = 0; i < s_school.length; i++) {
           typeMap.put(Long.valueOf(i), s_school[i].toUpperCase(Locale.ENGLISH));
+        }
+        if (typeMap.size() == 10 && Profile.getGame() == Profile.Game.PSTEE) {
+          typeMap.put(Long.valueOf(10L), "WILDMAGE");
         }
       }
     }

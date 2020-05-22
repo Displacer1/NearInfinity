@@ -1,10 +1,11 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.sound;
 
 import java.awt.BorderLayout;
+import java.awt.Component;
 import java.awt.Container;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
@@ -28,6 +29,7 @@ import org.infinity.gui.ButtonPanel;
 import org.infinity.gui.ButtonPopupMenu;
 import org.infinity.icon.Icons;
 import org.infinity.resource.Closeable;
+import org.infinity.resource.Referenceable;
 import org.infinity.resource.Resource;
 import org.infinity.resource.ResourceFactory;
 import org.infinity.resource.ViewableContainer;
@@ -38,7 +40,7 @@ import org.infinity.util.io.StreamUtils;
 /**
  * Handles all kinds of supported single track audio files.
  */
-public class SoundResource implements Resource, ActionListener, ItemListener, Closeable, Runnable
+public class SoundResource implements Resource, ActionListener, ItemListener, Closeable, Referenceable, Runnable
 {
   private final ResourceEntry entry;
   private final ButtonPanel buttonPanel = new ButtonPanel();
@@ -71,7 +73,7 @@ public class SoundResource implements Resource, ActionListener, ItemListener, Cl
       player.stopPlay();
       bPlay.setEnabled(true);
     } else if (buttonPanel.getControlByType(ButtonPanel.Control.FIND_REFERENCES) == event.getSource()) {
-      new WavReferenceSearcher(entry, panel.getTopLevelAncestor());
+      searchReferences(panel.getTopLevelAncestor());
     }
   }
 
@@ -87,10 +89,7 @@ public class SoundResource implements Resource, ActionListener, ItemListener, Cl
       if (bpmExport.getSelectedItem() == miExport) {
         ResourceFactory.exportResource(entry, panel.getTopLevelAncestor());
       } else if (bpmExport.getSelectedItem() == miConvert) {
-        String fileName = entry.toString();
-        if (fileName.lastIndexOf('.') > 0) {
-          fileName = fileName.substring(0, fileName.lastIndexOf('.')) + ".WAV";
-        }
+        final String fileName = StreamUtils.replaceFileExtension(entry.getResourceName(), "WAV");
         ByteBuffer buffer = StreamUtils.getByteBuffer(audioBuffer.getAudioData());
         ResourceFactory.exportResource(entry, buffer, fileName, panel.getTopLevelAncestor());
       }
@@ -124,6 +123,22 @@ public class SoundResource implements Resource, ActionListener, ItemListener, Cl
   }
 
 //--------------------- End Interface Resource ---------------------
+
+//--------------------- Begin Interface Referenceable ---------------------
+
+  @Override
+  public boolean isReferenceable()
+  {
+    return isReference;
+  }
+
+  @Override
+  public void searchReferences(Component parent)
+  {
+    new WavReferenceSearcher(entry, parent);
+  }
+
+//--------------------- End Interface Referenceable ---------------------
 
 //--------------------- Begin Interface Runnable ---------------------
 

@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.are;
@@ -8,11 +8,11 @@ import java.nio.ByteBuffer;
 
 import javax.swing.JComponent;
 
+import org.infinity.datatype.AnimateBitmap;
 import org.infinity.datatype.Bitmap;
 import org.infinity.datatype.DecNumber;
 import org.infinity.datatype.Flag;
 import org.infinity.datatype.HexNumber;
-import org.infinity.datatype.IdsBitmap;
 import org.infinity.datatype.ResourceRef;
 import org.infinity.datatype.TextString;
 import org.infinity.datatype.Unknown;
@@ -37,6 +37,7 @@ public final class Actor extends AbstractStruct implements AddRemovable, HasView
   public static final String ARE_ACTOR_DEST_Y               = "Destination: Y";
   public static final String ARE_ACTOR_FLAGS                = "Flags";
   public static final String ARE_ACTOR_IS_SPAWNED           = "Is spawned?";
+  public static final String ARE_ACTOR_RESREF_LETTER        = "First letter of CRE resref";
   public static final String ARE_ACTOR_DIFFICULTY           = "Difficulty";
   public static final String ARE_ACTOR_ANIMATION            = "Animation";
   public static final String ARE_ACTOR_ORIENTATION          = "Orientation";
@@ -62,21 +63,12 @@ public final class Actor extends AbstractStruct implements AddRemovable, HasView
   public static final String ARE_ACTOR_OFFSET_CRE_STRUCTURE = "CRE structure offset";
   public static final String ARE_ACTOR_SIZE_CRE_STRUCTURE   = "CRE structure size";
   public static final String ARE_ACTOR_CRE_FILE             = "CRE file";
+  public static final String ARE_ACTOR_NAME_ALT             = "Alternate actor name";
 
-  public static final String[] s_orientation = { "South", "SSW", "SW", "WSW", "West", "WNW", "NW", "NNW",
-                                                 "North", "NNE", "NE", "ENE", "East", "ESE", "SE", "SSE" };
-  public static final String[] s_noyes = {"No", "Yes"};
   public static final String[] s_flags = {"CRE attached", "CRE not attached", "Has seen party",
                                           "Toggle invulnerability", "Override script name"};
   public static final String[] s_flags_iwd = {"CRE attached", "CRE not attached", "Has seen party",
                                               "Toggle invulnerability"};
-  public static final String[] s_schedule = {"Not active", "00:30-01:29", "01:30-02:29", "02:30-03:29",
-                                             "03:30-04:29", "04:30-05:29", "05:30-06:29", "06:30-07:29",
-                                             "07:30-08:29", "08:30-09:29", "09:30-10:29", "10:30-11:29",
-                                             "11:30-12:29", "12:30-13:29", "13:30-14:29", "14:30-15:29",
-                                             "15:30-16:29", "16:30-17:29", "17:30-18:29", "18:30-19:29",
-                                             "19:30-20:29", "20:30-21:29", "21:30-22:29", "22:30-23:29",
-                                             "23:30-00:29"};
   public  static final String[] s_diff = {"None", "Level 1", "Level 2", "Level 3"};
 
   public Actor() throws Exception
@@ -178,7 +170,7 @@ public final class Actor extends AbstractStruct implements AddRemovable, HasView
 
   void updateCREOffset()
   {
-    StructEntry entry = getField(getFieldCount() - 1);
+    final StructEntry entry = getFields().get(getFields().size() - 1);
     if (entry instanceof CreResource)
       ((HexNumber)getAttribute(ARE_ACTOR_OFFSET_CRE_STRUCTURE)).setValue(entry.getOffset());
   }
@@ -197,21 +189,20 @@ public final class Actor extends AbstractStruct implements AddRemovable, HasView
     } else {
       addField(new Flag(buffer, offset + 40, 4, ARE_ACTOR_FLAGS, s_flags));
     }
-    addField(new Bitmap(buffer, offset + 44, 2, ARE_ACTOR_IS_SPAWNED, s_noyes));
+    addField(new Bitmap(buffer, offset + 44, 2, ARE_ACTOR_IS_SPAWNED, OPTION_NOYES));
+    addField(new TextString(buffer, offset + 46, 1, ARE_ACTOR_RESREF_LETTER));
     if (Profile.getEngine() == Profile.Engine.IWD2) {
-      addField(new Unknown(buffer, offset + 46, 1));
       addField(new Flag(buffer, offset + 47, 1, ARE_ACTOR_DIFFICULTY, s_diff));
+    } else {
+      addField(new Unknown(buffer, offset + 47, 1));
     }
-    else {
-      addField(new Unknown(buffer, offset + 46, 2));
-    }
-    addField(new IdsBitmap(buffer, offset + 48, 4, ARE_ACTOR_ANIMATION, "ANIMATE.IDS"));
-    addField(new Bitmap(buffer, offset + 52, 2, ARE_ACTOR_ORIENTATION, s_orientation));
+    addField(new AnimateBitmap(buffer, offset + 48, 4, ARE_ACTOR_ANIMATION));
+    addField(new Bitmap(buffer, offset + 52, 2, ARE_ACTOR_ORIENTATION, OPTION_ORIENTATION));
     addField(new Unknown(buffer, offset + 54, 2));
     addField(new DecNumber(buffer, offset + 56, 4, ARE_ACTOR_EXPIRY_TIME));
     addField(new DecNumber(buffer, offset + 60, 2, ARE_ACTOR_WANDER_DISTANCE));
     addField(new DecNumber(buffer, offset + 62, 2, ARE_ACTOR_FOLLOW_DISTANCE));
-    addField(new Flag(buffer, offset + 64, 4, ARE_ACTOR_PRESENT_AT, s_schedule));
+    addField(new Flag(buffer, offset + 64, 4, ARE_ACTOR_PRESENT_AT, OPTION_SCHEDULE));
     addField(new DecNumber(buffer, offset + 68, 4, ARE_ACTOR_NUM_TIMES_TALKED_TO));
     addField(new ResourceRef(buffer, offset + 72, ARE_ACTOR_DIALOG, "DLG"));
     addField(new ResourceRef(buffer, offset + 80, ARE_ACTOR_SCRIPT_OVERRIDE, "BCS"));
@@ -244,7 +235,12 @@ public final class Actor extends AbstractStruct implements AddRemovable, HasView
       addField(new Unknown(buffer, offset + 152, 120));
     }
     else {
-      addField(new Unknown(buffer, offset + 144, 128));
+      if (Profile.isEnhancedEdition()) {
+        addField(new TextString(buffer, offset + 144, 32, ARE_ACTOR_NAME_ALT));
+        addField(new Unknown(buffer, offset + 176, 96));
+      } else {
+        addField(new Unknown(buffer, offset + 144, 128));
+      }
     }
 
     if (creOffset.getValue() > 0 && creSize.getValue() >= 0x2d4) {
@@ -254,4 +250,3 @@ public final class Actor extends AbstractStruct implements AddRemovable, HasView
     return offset + 272;
   }
 }
-

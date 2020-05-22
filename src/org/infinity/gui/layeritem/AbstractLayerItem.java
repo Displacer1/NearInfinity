@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.gui.layeritem;
@@ -16,6 +16,7 @@ import java.util.Vector;
 import javax.swing.JComponent;
 
 import org.infinity.gui.ViewFrame;
+import org.infinity.resource.StructEntry;
 import org.infinity.resource.Viewable;
 
 /**
@@ -28,75 +29,32 @@ public abstract class AbstractLayerItem extends JComponent implements MouseListe
    */
   public enum ItemState { NORMAL, HIGHLIGHTED }
 
-  private Vector<ActionListener> actionListener;
-  private Vector<LayerItemListener> itemStateListener;
-  private String actionCommand;
-  private Viewable viewable;
+  private final Vector<ActionListener> actionListener = new Vector<>();
+  private final Vector<LayerItemListener> itemStateListener = new Vector<>();
+  private final Viewable viewable;
   private Object objData;
-  private String message;
   private ItemState itemState;
-  private Point location;
-  private Point center;
+  private final Point center;
 
   /**
-   * Initialize object with default settings.
-   */
-  public AbstractLayerItem()
-  {
-    this(null);
-  }
-
-  /**
-   * Initialize object with the specified map location.
-   * @param location Map location
-   */
-  public AbstractLayerItem(Point location)
-  {
-    this(location, null);
-  }
-
-  /**
-   * Initialize object with a specific map location and an associated viewable object.
-   * @param location Map location
+   * Initialize object with a associated viewable object and message for
+   * both info box and quick info.
+   *
    * @param viewable Associated Viewable object
+   * @param tooltip A short text message shown as tooltip or menu item text
    */
-  public AbstractLayerItem(Point location, Viewable viewable)
+  public AbstractLayerItem(Viewable viewable, String tooltip)
   {
-    this(location, viewable, null);
-  }
-
-  /**
-   * Initialize object with a specific map location, associated Viewable and an additional text message.
-   * @param location Map location
-   * @param viewable Associated Viewable object
-   * @param msg An arbitrary text message
-   */
-  public AbstractLayerItem(Point location, Viewable viewable, String msg)
-  {
-    this.actionListener = new Vector<ActionListener>();
-    this.itemStateListener = new Vector<LayerItemListener>();
     this.viewable = viewable;
     this.itemState = ItemState.NORMAL;
     this.center = new Point();
-    setMapLocation(location);
-    setMessage(msg);
-    setActionCommand(null);
+    if (viewable instanceof StructEntry) {
+      setToolTipText(((StructEntry) viewable).getName() + ": " + tooltip);
+    } else {
+      setToolTipText(tooltip);
+    }
     addMouseListener(this);
     addMouseMotionListener(this);
-  }
-
-  public String getActionCommand()
-  {
-    return actionCommand;
-  }
-
-  public void setActionCommand(String cmd)
-  {
-    if (cmd != null) {
-      actionCommand = cmd;
-    } else {
-      actionCommand = "";
-    }
   }
 
   public void addActionListener(ActionListener l)
@@ -108,11 +66,7 @@ public abstract class AbstractLayerItem extends JComponent implements MouseListe
 
   public ActionListener[] getActionListeners()
   {
-    ActionListener[] array = new ActionListener[actionListener.size()];
-    for (int i = 0; i < actionListener.size(); i++) {
-      array[i] = actionListener.get(i);
-    }
-    return array;
+    return actionListener.toArray(new ActionListener[actionListener.size()]);
   }
 
   public void removeActionListener(ActionListener l)
@@ -131,11 +85,7 @@ public abstract class AbstractLayerItem extends JComponent implements MouseListe
 
   public LayerItemListener[] getLayerItemListeners()
   {
-    LayerItemListener[] array = new LayerItemListener[itemStateListener.size()];
-    for (int i = 0; i < itemStateListener.size(); i++) {
-      array[i] = itemStateListener.get(i);
-    }
-    return array;
+    return itemStateListener.toArray(new LayerItemListener[itemStateListener.size()]);
   }
 
   public void removeLayerItemListener(LayerItemListener l)
@@ -156,69 +106,12 @@ public abstract class AbstractLayerItem extends JComponent implements MouseListe
   }
 
   /**
-   * Moves this component to the specified location. Takes item-specific corrections into account.
-   * @param p New location
-   */
-  public void setItemLocation(Point p)
-  {
-    if (p == null) {
-      p = new Point(0, 0);
-    }
-
-    setLocation(new Point(p.x - center.x, p.y - center.y));
-  }
-
-  /**
-   * Returns the map location of the item.
-   * @return Map location of the item.
-   */
-  public Point getMapLocation()
-  {
-    return location;
-  }
-
-  /**
-   * Sets a new map location of the item.
-   * @param location New map location of the item.
-   */
-  public void setMapLocation(Point location)
-  {
-    if (location != null) {
-      this.location = location;
-    } else {
-      this.location = new Point(0, 0);
-    }
-  }
-
-  /**
-   * Set a simple text message which can be queried at a given time
-   * @param msg The text message
-   */
-  public void setMessage(String msg)
-  {
-    if (msg != null) {
-      message = msg;
-    } else {
-      message = "";
-    }
-  }
-
-  /**
-   * Returns a simple text message associated with the component.
-   * @return A text message.
-   */
-  public String getMessage()
-  {
-    return message;
-  }
-
-  /**
    * Returns a String representation of this object.
    */
   @Override
   public String toString()
   {
-    return getMessage();
+    return getToolTipText();
   }
 
   /**
@@ -249,15 +142,6 @@ public abstract class AbstractLayerItem extends JComponent implements MouseListe
   }
 
   /**
-   * Associates a new Viewable object with the component
-   * @param v The new viewable.
-   */
-  public void setViewable(Viewable v)
-  {
-    viewable = v;
-  }
-
-  /**
    * Returns the current Viewable object associated with the component.
    * @return The current Viewable object associated with the component.
    */
@@ -276,8 +160,7 @@ public abstract class AbstractLayerItem extends JComponent implements MouseListe
     }
   }
 
-//--------------------- Begin Interface MouseListener ---------------------
-
+  //<editor-fold defaultstate="collapsed" desc="MouseListener">
   @Override
   public void mouseClicked(MouseEvent event)
   {
@@ -314,11 +197,9 @@ public abstract class AbstractLayerItem extends JComponent implements MouseListe
       setItemState(ItemState.NORMAL);
     }
   }
+  //</editor-fold>
 
-//--------------------- End Interface MouseListener ---------------------
-
-//--------------------- Begin Interface MouseMotionListener ---------------------
-
+  //<editor-fold defaultstate="collapsed" desc="MouseMotionListener">
   @Override
   public void mouseDragged(MouseEvent event)
   {
@@ -333,28 +214,18 @@ public abstract class AbstractLayerItem extends JComponent implements MouseListe
       setItemState(ItemState.NORMAL);
     }
   }
+  //</editor-fold>
 
-//--------------------- End Interface MouseMotionListener ---------------------
-
-  @Override
-  public String getToolTipText(MouseEvent event)
-  {
-    // Tooltip is only displayed over visible areas of this component
-    if (isMouseOver(event.getPoint())) {
-      return message;
-    } else {
-      return null;
-    }
-  }
-
+  //<editor-fold defaultstate="collapsed" desc="JComponent">
   @Override
   public boolean contains(int x, int y)
   {
     // Non-visible parts of the component are disregarded by mouse events
     return isMouseOver(new Point(x, y));
   }
+  //</editor-fold>
 
-  // Returns whether the mouse cursor is over the relevant part of the component
+  /** Returns whether the mouse cursor is over the relevant part of the component. */
   protected boolean isMouseOver(Point pt)
   {
     if (pt != null) {
@@ -364,7 +235,7 @@ public abstract class AbstractLayerItem extends JComponent implements MouseListe
     }
   }
 
-  // Adds an offset to the component's position
+  /** Adds an offset to the component's position. */
   protected void setLocationOffset(Point ofs)
   {
     if (ofs != null) {
@@ -373,7 +244,7 @@ public abstract class AbstractLayerItem extends JComponent implements MouseListe
     }
   }
 
-  // Returns the offset to the component's position
+  /** Returns the offset to the component's position. */
   protected Point getLocationOffset()
   {
     return center;
@@ -384,7 +255,7 @@ public abstract class AbstractLayerItem extends JComponent implements MouseListe
     if (itemState != newState) {
       itemState = newState;
       if (!itemStateListener.isEmpty()) {
-        LayerItemEvent ise = new LayerItemEvent(this, actionCommand);
+        final LayerItemEvent ise = new LayerItemEvent(this, "");
         for (final LayerItemListener l: itemStateListener)
           l.layerItemChanged(ise);
       }
@@ -400,14 +271,10 @@ public abstract class AbstractLayerItem extends JComponent implements MouseListe
   {
     if ((button == MouseEvent.BUTTON1) && !actionListener.isEmpty()) {
       // processing left mouse click event
-      ActionEvent ae = new ActionEvent(this, ActionEvent.ACTION_PERFORMED, actionCommand);
+      final ActionEvent ae = new ActionEvent(this, ActionEvent.ACTION_PERFORMED, "");
       for (final ActionListener l: actionListener) {
         l.actionPerformed(ae);
       }
-    } else if (button == MouseEvent.BUTTON2) {
-      // processing right mouse click event
-    } else if (button == MouseEvent.BUTTON3) {
-      // processing middle mouse click event
     }
   }
 }

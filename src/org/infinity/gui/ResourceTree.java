@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2018 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.gui;
@@ -15,6 +15,7 @@ import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,6 +24,7 @@ import java.util.Locale;
 import java.util.Stack;
 
 import javax.swing.JButton;
+import javax.swing.JFileChooser;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
@@ -31,14 +33,20 @@ import javax.swing.JScrollPane;
 import javax.swing.JTree;
 import javax.swing.SwingConstants;
 import javax.swing.Timer;
+import javax.swing.event.PopupMenuEvent;
+import javax.swing.event.PopupMenuListener;
 import javax.swing.event.TreeSelectionEvent;
 import javax.swing.event.TreeSelectionListener;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.tree.DefaultTreeCellRenderer;
 import javax.swing.tree.TreePath;
 import javax.swing.tree.TreeSelectionModel;
 
 import org.infinity.NearInfinity;
+import org.infinity.gui.BrowserMenuBar.OverrideMode;
 import org.infinity.icon.Icons;
+import org.infinity.resource.Profile;
+import org.infinity.resource.Referenceable;
 import org.infinity.resource.Resource;
 import org.infinity.resource.ResourceFactory;
 import org.infinity.resource.key.BIFFResourceEntry;
@@ -46,14 +54,16 @@ import org.infinity.resource.key.FileResourceEntry;
 import org.infinity.resource.key.ResourceEntry;
 import org.infinity.resource.key.ResourceTreeFolder;
 import org.infinity.resource.key.ResourceTreeModel;
+import org.infinity.util.io.FileManager;
+import org.infinity.util.io.StreamUtils;
 
 public final class ResourceTree extends JPanel implements TreeSelectionListener, ActionListener
 {
   private final JButton bnext = new JButton("Forward", Icons.getIcon(Icons.ICON_FORWARD_16));
   private final JButton bprev = new JButton("Back", Icons.getIcon(Icons.ICON_BACK_16));
   private final JTree tree = new JTree();
-  private final Stack<ResourceEntry> nextstack = new Stack<ResourceEntry>();
-  private final Stack<ResourceEntry> prevstack = new Stack<ResourceEntry>();
+  private final Stack<ResourceEntry> nextstack = new Stack<>();
+  private final Stack<ResourceEntry> prevstack = new Stack<>();
   private ResourceEntry prevnextnode, shownresource;
   private boolean showresource = true;
 
@@ -202,7 +212,7 @@ public final class ResourceTree extends JPanel implements TreeSelectionListener,
   {
     ResourceTreeModel model = (ResourceTreeModel)tree.getModel();
     if (model != null) {
-      ResourceTreeFolder root = (ResourceTreeFolder)model.getRoot();
+      ResourceTreeFolder root = model.getRoot();
       processAllNodes(tree, new TreePath(root), true);
     }
   }
@@ -211,7 +221,7 @@ public final class ResourceTree extends JPanel implements TreeSelectionListener,
   {
     ResourceTreeModel model = (ResourceTreeModel)tree.getModel();
     if (model != null) {
-      ResourceTreeFolder root = (ResourceTreeFolder)model.getRoot();
+      ResourceTreeFolder root = model.getRoot();
       processAllNodes(tree, new TreePath(root), false);
       tree.expandPath(new TreePath(root));  // virtual root node is always expanded
     }
@@ -244,22 +254,26 @@ public final class ResourceTree extends JPanel implements TreeSelectionListener,
   /** Attempts to rename the specified file resource entry. */
   static void renameResource(FileResourceEntry entry)
   {
-    String filename = JOptionPane.showInputDialog(NearInfinity.getInstance(), "Enter new filename",
-                                                  "Rename " + entry.toString(),
-                                                  JOptionPane.QUESTION_MESSAGE);
+    String filename = (String)JOptionPane.showInputDialog(NearInfinity.getInstance(), "Enter new filename",
+                                                          "Rename " + entry.getResourceName(),
+                                                          JOptionPane.QUESTION_MESSAGE,
+                                                          null, null, entry.getResourceName());
     if (filename == null) {
       return;
     }
-    if (!filename.toUpperCase(Locale.ENGLISH).endsWith(entry.getExtension())) {
+    if (!filename.contains(".")) {
       filename = filename + '.' + entry.getExtension();
     }
-    if (Files.exists(entry.getActualPath().getParent().resolve(filename))) {
-      JOptionPane.showMessageDialog(NearInfinity.getInstance(), "File already exists!", "Error",
-                                    JOptionPane.ERROR_MESSAGE);
+    if (Files.exists(entry.getActualPath().getParent().resolve(filename))
+     && JOptionPane.showConfirmDialog(NearInfinity.getInstance(),
+                                      "File with name \"" + filename + "\" already exists! Overwrite?",
+                                      "Confirm overwrite " + filename, JOptionPane.OK_CANCEL_OPTION,
+                                      JOptionPane.QUESTION_MESSAGE) != JOptionPane.OK_OPTION
+    ) {
       return;
     }
     try {
-      entry.renameFile(filename, false);
+      entry.renameFile(filename, true);
     } catch (IOException e) {
       JOptionPane.showMessageDialog(NearInfinity.getInstance(), "Error renaming file \"" + filename + "\"!",
                                     "Error", JOptionPane.ERROR_MESSAGE);
@@ -369,7 +383,7 @@ public final class ResourceTree extends JPanel implements TreeSelectionListener,
                 JOptionPane.showMessageDialog(NearInfinity.getInstance(),
                                               "Error while restoring resource.\n" +
                                               "Near Infinity is unable to recover from the restore operation.\n" +
-                                              String.format("Please manually rename the file \"%1$s\" into \"%2$s\", located in \n + \"%3$s\"",
+                                              String.format("Please manually rename the file \"%s\" into \"%s\", located in \n + \"%s\"",
                                                             tmpName, curName, path),
                                               "Critical Error", JOptionPane.ERROR_MESSAGE);
                 e.printStackTrace();
@@ -394,6 +408,33 @@ public final class ResourceTree extends JPanel implements TreeSelectionListener,
                                           "Error", JOptionPane.ERROR_MESSAGE);
             e.printStackTrace();
           }
+        }
+      }
+    }
+  }
+
+  static void createZipFile(Path path)
+  {
+    if (path != null && Files.isDirectory(path)) {
+      JFileChooser fc = new JFileChooser(Profile.getGameRoot().toFile());
+      fc.setDialogTitle("Save as");
+      fc.setFileFilter(new FileNameExtensionFilter("Zip files (*.zip)", "zip"));
+      fc.setSelectedFile(new File(Profile.getGameRoot().toFile(), path.getFileName().toString() + ".zip"));
+      if (fc.showSaveDialog(NearInfinity.getInstance()) == JFileChooser.APPROVE_OPTION) {
+        WindowBlocker wb = new WindowBlocker(NearInfinity.getInstance());
+        try {
+          wb.setBlocked(true);
+          StreamUtils.createZip(path, fc.getSelectedFile().toPath(), true);
+          wb.setBlocked(false);
+          JOptionPane.showMessageDialog(NearInfinity.getInstance(), "Zip file created.", "Information",
+                                        JOptionPane.INFORMATION_MESSAGE);
+        } catch (IOException e) {
+          e.printStackTrace();
+          wb.setBlocked(false);
+          JOptionPane.showMessageDialog(NearInfinity.getInstance(), "Error while creating zip file.",
+                                        "Error", JOptionPane.ERROR_MESSAGE);
+        } finally {
+          wb.setBlocked(false);
         }
       }
     }
@@ -579,62 +620,47 @@ public final class ResourceTree extends JPanel implements TreeSelectionListener,
     }
   }
 
-  private final class TreePopupMenu extends JPopupMenu implements ActionListener
+  private final class TreePopupMenu extends JPopupMenu implements ActionListener, PopupMenuListener
   {
     private final JMenuItem mi_open = new JMenuItem("Open");
     private final JMenuItem mi_opennew = new JMenuItem("Open in new window");
+    private final JMenuItem mi_reference = new JMenuItem("Find references");
     private final JMenuItem mi_export = new JMenuItem("Export");
     private final JMenuItem mi_addcopy = new JMenuItem("Add copy of");
     private final JMenuItem mi_rename = new JMenuItem("Rename");
     private final JMenuItem mi_delete = new JMenuItem("Delete");
     private final JMenuItem mi_restore = new JMenuItem("Restore backup");
+    private final JMenuItem mi_zip= new JMenuItem("Create zip archive");
 
     TreePopupMenu()
     {
-      add(mi_open);
-      add(mi_opennew);
-      add(mi_export);
-      add(mi_addcopy);
-      add(mi_rename);
-      add(mi_delete);
-      add(mi_restore);
-      mi_open.addActionListener(this);
-      mi_opennew.addActionListener(this);
-      mi_export.addActionListener(this);
-      mi_addcopy.addActionListener(this);
-      mi_rename.addActionListener(this);
-      mi_delete.addActionListener(this);
-      mi_restore.addActionListener(this);
-      mi_opennew.setFont(mi_opennew.getFont().deriveFont(Font.PLAIN));
-      mi_export.setFont(mi_opennew.getFont());
-      mi_addcopy.setFont(mi_opennew.getFont());
-      mi_rename.setFont(mi_opennew.getFont());
-      mi_delete.setFont(mi_opennew.getFont());
-      mi_restore.setFont(mi_opennew.getFont());
+      mi_reference.setEnabled(false);
+      mi_zip.setToolTipText("Create a zip archive out of the selected saved game.");
+      Font fnt = mi_open.getFont().deriveFont(Font.PLAIN);
+      for (JMenuItem mi : new JMenuItem[] {mi_open, mi_opennew, mi_reference, mi_export,
+                                           mi_zip, mi_addcopy, mi_rename, mi_delete, mi_restore}) {
+        add(mi);
+        mi.addActionListener(this);
+        mi.setFont(fnt);
+      }
+      addPopupMenuListener(this);
     }
 
-    @Override
-    public void show(Component invoker, int x, int y)
+    private ResourceEntry getResourceEntry()
     {
-      super.show(invoker, x, y);
-      mi_rename.setEnabled(tree.getLastSelectedPathComponent() instanceof FileResourceEntry);
+      ResourceEntry entry = null;
       if (tree.getLastSelectedPathComponent() instanceof ResourceEntry) {
-        ResourceEntry entry = (ResourceEntry)tree.getLastSelectedPathComponent();
-        mi_delete.setEnabled(entry != null && entry.hasOverride() || entry instanceof FileResourceEntry);
-        mi_restore.setEnabled(isBackupAvailable(entry));
+        entry = (ResourceEntry)tree.getLastSelectedPathComponent();
       }
-      else {
-        mi_delete.setEnabled(false);
-        mi_restore.setEnabled(false);
-      }
+      return entry;
     }
 
     @Override
     public void actionPerformed(ActionEvent event)
     {
       showresource = true;
-      ResourceEntry node = (ResourceEntry)tree.getLastSelectedPathComponent();
-      if (event.getSource() == mi_open) {
+      ResourceEntry node = getResourceEntry();
+      if (event.getSource() == mi_open && node != null) {
         if (prevnextnode != null)
           prevstack.push(prevnextnode);
         nextstack.removeAllElements();
@@ -644,32 +670,95 @@ public final class ResourceTree extends JPanel implements TreeSelectionListener,
         shownresource = node;
         NearInfinity.getInstance().setViewable(ResourceFactory.getResource(node));
       }
-      else if (event.getSource() == mi_opennew) {
+      else if (event.getSource() == mi_opennew && node != null) {
         Resource res = ResourceFactory.getResource(node);
         if (res != null)
           new ViewFrame(NearInfinity.getInstance(), res);
       }
-      else if (event.getSource() == mi_export) {
+      else if (event.getSource() == mi_reference && node != null) {
+        Resource res = ResourceFactory.getResource(node);
+        if (res != null && res instanceof Referenceable) {
+          if (((Referenceable)res).isReferenceable()) {
+            ((Referenceable)res).searchReferences(NearInfinity.getInstance());
+          } else {
+            JOptionPane.showMessageDialog(NearInfinity.getInstance(),
+                                          "Finding references is not supported for " + node + ".",
+                                          "Error", JOptionPane.ERROR_MESSAGE);
+          }
+        }
+      }
+      else if (event.getSource() == mi_export && node != null) {
         ResourceFactory.exportResource(node, NearInfinity.getInstance());
       }
-      else if (event.getSource() == mi_addcopy) {
+      else if (event.getSource() == mi_addcopy && node != null) {
         ResourceFactory.saveCopyOfResource(node);
       }
-      else if (event.getSource() == mi_rename) {
-        if (tree.getLastSelectedPathComponent() instanceof FileResourceEntry) {
-          renameResource((FileResourceEntry)tree.getLastSelectedPathComponent());
+      else if (event.getSource() == mi_rename && node instanceof FileResourceEntry) {
+        renameResource((FileResourceEntry)node);
+      }
+      else if (event.getSource() == mi_delete && node != null) {
+        deleteResource(node);
+      }
+      else if (event.getSource() == mi_restore && node != null) {
+        restoreResource(node);
+      }
+      else if (event.getSource() == mi_zip) {
+        Path saveFolder = null;
+        Object o = tree.getLastSelectedPathComponent();
+        if (o instanceof FileResourceEntry) {
+          saveFolder = ((FileResourceEntry)o).getActualPath().getParent();
+        }
+        else if (o instanceof ResourceTreeFolder) {
+          ResourceTreeFolder f = (ResourceTreeFolder)o;
+          if (f.getChildCount() > 0) {
+            for (int i = 0; i < f.getChildCount(); i++) {
+              if (f.getChild(i) instanceof FileResourceEntry) {
+                saveFolder = ((FileResourceEntry)f.getChild(i)).getActualPath().getParent();
+                break;
+              }
+            }
+          }
+        }
+        if (saveFolder != null) {
+          createZipFile(saveFolder);
+        } else {
+          JOptionPane.showMessageDialog(NearInfinity.getInstance(), "Empty or invalid save folder.",
+                                        "Error", JOptionPane.ERROR_MESSAGE);
         }
       }
-      else if (event.getSource() == mi_delete) {
-        if (tree.getLastSelectedPathComponent() instanceof ResourceEntry) {
-          deleteResource((ResourceEntry)tree.getLastSelectedPathComponent());
+    }
+
+    @Override
+    public void popupMenuWillBecomeVisible(PopupMenuEvent event)
+    {
+      ResourceEntry entry = getResourceEntry();
+      Class<? extends Resource> cls = ResourceFactory.getResourceType(entry);
+      mi_reference.setEnabled(cls != null && Referenceable.class.isAssignableFrom(cls));
+      mi_rename.setEnabled(entry instanceof FileResourceEntry);
+
+      mi_delete.setEnabled(entry != null && entry.hasOverride() || entry instanceof FileResourceEntry);
+      mi_restore.setEnabled(isBackupAvailable(entry));
+      mi_zip.setEnabled(entry instanceof FileResourceEntry && Profile.isSaveGame(entry.getActualPath()));
+
+      String path = "";
+      if (tree.getLastSelectedPathComponent() instanceof ResourceTreeFolder) {
+        ResourceTreeFolder folder = (ResourceTreeFolder)tree.getLastSelectedPathComponent();
+        while (folder != null && !folder.folderName().isEmpty()) {
+          path = folder.folderName() + "/" + path;
+          folder = folder.getParentFolder();
         }
       }
-      else if (event.getSource() == mi_restore) {
-        if (tree.getLastSelectedPathComponent() instanceof ResourceEntry) {
-          restoreResource((ResourceEntry)tree.getLastSelectedPathComponent());
-        }
-      }
+      mi_zip.setEnabled(!path.isEmpty() && Profile.isSaveGame(FileManager.resolve(path)));
+    }
+
+    @Override
+    public void popupMenuWillBecomeInvisible(PopupMenuEvent event)
+    {
+    }
+
+    @Override
+    public void popupMenuCanceled(PopupMenuEvent event)
+    {
     }
   }
 
@@ -683,14 +772,30 @@ public final class ResourceTree extends JPanel implements TreeSelectionListener,
     public Component getTreeCellRendererComponent(JTree tree, Object o, boolean sel, boolean expanded,
                                                   boolean leaf, int row, boolean hasFocus)
     {
+      super.getTreeCellRendererComponent(tree, o, sel, expanded, leaf, row, hasFocus);
+      Font font = tree.getFont();
       if (leaf && o instanceof ResourceEntry) {
-        super.getTreeCellRendererComponent(tree, o, sel, expanded, leaf, row, hasFocus);
-        setIcon(((ResourceEntry)o).getIcon());
-        return this;
+        final ResourceEntry e = (ResourceEntry)o;
+
+        final BrowserMenuBar options = BrowserMenuBar.getInstance();
+        if (options.showTreeSearchNames()) {
+          final String name  = e.getResourceName();
+          final String title = e.getSearchString();
+          //TODO: refactor code and remove "No such index" comparison
+          // Now getSearchString returns that string when StringRef index not found
+          // in the talk table
+          final boolean hasTitle = title != null && !title.isEmpty() && !"No such index".equals(title);
+          setText(hasTitle ? name + " - " + title : name);
+        }
+        setIcon(e.getIcon());
+        // Do not use bold in Override mode othrewise almost all entries will be in bold, which looks not so good
+        final boolean inOverrideMode = options.getOverrideMode() == OverrideMode.InOverride;
+        if (e.hasOverride() && !inOverrideMode && options.highlightOverridden()) {
+          font = font.deriveFont(Font.BOLD);
+        }
       }
-      else
-        return super.getTreeCellRendererComponent(tree, o, sel, expanded, leaf, row, hasFocus);
+      setFont(font);
+      return this;
     }
   }
 }
-

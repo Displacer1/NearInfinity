@@ -128,7 +128,7 @@ public class ConvertToMos extends ChildFrame
 
     ProgressMonitor progress = null;
     try {
-      String note = "Converting tile %1$d / %2$d";
+      String note = "Converting tile %d / %d";
       int progressIndex = 0, progressMax = tileCount;
       if (showProgress) {
         progress = new ProgressMonitor(parent, "Converting MOS...",
@@ -153,7 +153,6 @@ public class ConvertToMos extends ChildFrame
 
       // applying color reduction to each tile
       int[] palette = new int[255];
-      int[] hclPalette = new int[255];
       byte[] tilePalette = new byte[1024];
       byte[] tileData = new byte[64*64];
       int curPalOfs = palOfs, curTableOfs = tableOfs, curDataOfs = dataOfs;
@@ -175,8 +174,7 @@ public class ConvertToMos extends ChildFrame
         }
 
         int[] pixels = tileList.get(tileIdx);
-        if (ColorConvert.medianCut(pixels, 255, palette, false)) {
-          ColorConvert.toHclPalette(palette, hclPalette);
+        if (ColorConvert.medianCut(pixels, 255, palette, true)) {
           // filling palette
           // first palette entry denotes transparency
           tilePalette[0] = tilePalette[2] = tilePalette[3] = 0; tilePalette[1] = (byte)255;
@@ -196,7 +194,7 @@ public class ConvertToMos extends ChildFrame
               if (palIndex != null) {
                 tileData[i] = (byte)(palIndex + 1);
               } else {
-                byte color = (byte)ColorConvert.nearestColor(pixels[i], hclPalette);
+                byte color = (byte)ColorConvert.nearestColorRGB(pixels[i], palette, true);
                 tileData[i] = (byte)(color + 1);
                 colorCache.put(pixels[i], color);
               }
@@ -206,7 +204,7 @@ public class ConvertToMos extends ChildFrame
           // error handling
           dst = null;
           result.add(null);
-          result.add(String.format("Error processing tile #%1$d. Conversion cancelled.", tileIdx));
+          result.add(String.format("Error processing tile #%d. Conversion cancelled.", tileIdx));
           return false;
         }
 
@@ -218,7 +216,7 @@ public class ConvertToMos extends ChildFrame
         curDataOfs += pixels.length;
       }
       tileList.clear(); tileList = null;
-      tileData = null; tilePalette = null; hclPalette = null; palette = null;
+      tileData = null; tilePalette = null; /*hclPalette = null;*/ palette = null;
 
       // optionally compressing to MOSC V1
       if (compressed) {
@@ -348,7 +346,7 @@ public class ConvertToMos extends ChildFrame
       if (pvrzIndex + pageList.size() > 100000) {
         result.add(null);
         result.add(String.format("One or more PVRZ indices exceed the max. possible value of 99999.\n" +
-                                 "Please choose a start index smaller than or equal to %1$d.",
+                                 "Please choose a start index smaller than or equal to %d.",
                                  100000 - pageList.size()));
         return false;
       }
@@ -436,7 +434,7 @@ public class ConvertToMos extends ChildFrame
       pageMax = Math.max(pageMax, e.page);
     }
 
-    String note = "Generating PVRZ file %1$s / %2$s";
+    String note = "Generating PVRZ file %s / %s";
     int curProgress = 1;
     if (progress != null) {
       progress.setMinimum(0);
@@ -932,7 +930,7 @@ public class ConvertToMos extends ChildFrame
   private String pvrzInfoString(Object o)
   {
     int index = getPvrzIndex(o);
-    return String.format("Resulting in MOS%1$04d.PVRZ, MOS%2$04d.PVRZ, ...", index, index+1);
+    return String.format("Resulting in MOS%04d.PVRZ, MOS%04d.PVRZ, ...", index, index+1);
   }
 
   private String getImageFileName(Path path)
@@ -979,7 +977,7 @@ public class ConvertToMos extends ChildFrame
     Path inFile = FileManager.resolve(tfInputV1.getText());
     if (!Files.isRegularFile(inFile)) {
       result.add(null);
-      result.add(String.format("Input file \"%1$s\" does not exist.", tfInputV1.getText()));
+      result.add(String.format("Input file \"%s\" does not exist.", tfInputV1.getText()));
       return result;
     }
 
@@ -997,13 +995,17 @@ public class ConvertToMos extends ChildFrame
 
     // handling "auto" compression
     DxtEncoder.DxtType dxtType = DxtEncoder.DxtType.DXT1;
-    if (tabPane.getSelectedIndex() == 1 && cbCompression.getSelectedIndex() == 0) {
-      int[] pixels = ((DataBufferInt)srcImage.getRaster().getDataBuffer()).getData();
-      for (int i = 0; i < pixels.length; i++) {
-        int alpha = pixels[i] >>> 24;
-        if (alpha > 0x20 && alpha < 0xe0) {
-          dxtType = DxtEncoder.DxtType.DXT5;
-          break;
+    if (tabPane.getSelectedIndex() == 1) {
+      if (cbCompression.getSelectedIndex() == 2) {
+        dxtType = DxtEncoder.DxtType.DXT5;
+      } else {
+        int[] pixels = ((DataBufferInt)srcImage.getRaster().getDataBuffer()).getData();
+        for (int i = 0; i < pixels.length; i++) {
+          int alpha = pixels[i] >>> 24;
+          if (alpha > 0x20 && alpha < 0xe0) {
+            dxtType = DxtEncoder.DxtType.DXT5;
+            break;
+          }
         }
       }
     }

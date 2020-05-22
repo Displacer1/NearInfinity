@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.gui.hexview;
@@ -75,6 +75,7 @@ import org.infinity.resource.StructEntry;
 import org.infinity.resource.dlg.AbstractCode;
 import org.infinity.resource.key.BIFFResourceEntry;
 import org.infinity.resource.key.ResourceEntry;
+import org.infinity.util.Misc;
 import org.infinity.util.io.FileManager;
 import org.infinity.util.io.StreamUtils;
 
@@ -116,7 +117,7 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
   private boolean tabSelected;
   private int cachedSize;
 
-  // Returns a short description of the specified structure type
+  /** Returns a short description of the specified structure type. */
   public static String getTypeDesc(StructEntry type)
   {
     if (type instanceof AbstractStruct) {
@@ -190,8 +191,7 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
     initGui();
   }
 
-//--------------------- Begin Interface IHexViewListener ---------------------
-
+  //<editor-fold defaultstate="collapsed" desc="IHexViewListener">
   @Override
   public void stateChanged(HexViewEvent event)
   {
@@ -208,21 +208,17 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
       updateStatusBar(offset);
     }
   }
+  //</editor-fold>
 
-//--------------------- End Interface IHexViewListener ---------------------
-
-//--------------------- Begin Interface IDataChangedListener ---------------------
-
+  //<editor-fold defaultstate="collapsed" desc="IDataChangedListener">
   @Override
   public void dataChanged(DataChangedEvent event)
   {
     getStruct().setStructChanged(true);
   }
+  //</editor-fold>
 
-//--------------------- End Interface IDataChangedListener ---------------------
-
-//--------------------- Begin Interface ActionListener ---------------------
-
+  //<editor-fold defaultstate="collapsed" desc="ActionListener">
   @Override
   public void actionPerformed(ActionEvent event)
   {
@@ -231,11 +227,11 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
         boolean b;
         String s = null;
         if (getFindData().getDataType() == FindDataDialog.Type.TEXT) {
-          b = !getFindData().getText().isEmpty();
           s = getFindData().getText();
+          b = !s.isEmpty();
         } else {
-          b = (getFindData().getBytes().length > 0);
-          if (getFindData().getBytes().length > 0) {
+          b = getFindData().getBytes().length > 0;
+          if (b) {
             s = byteArrayToString(getFindData().getBytes());
           }
         }
@@ -248,9 +244,9 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
         if (s == null) {
           c.setToolTipText(null);
         } else if (s.length() <= 30) {
-          c.setToolTipText(String.format("Find \"%1$s\"", s));
+          c.setToolTipText(String.format("Find \"%s\"", s));
         } else {
-          c.setToolTipText(String.format("Find \"%1$s...\"", s.substring(0, 30)));
+          c.setToolTipText(String.format("Find \"%s...\"", s.substring(0, 30)));
         }
       }
       getHexView().requestFocusInWindow();
@@ -277,7 +273,7 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
             return;
           }
         }
-        outPath = FileManager.query(overridePath, entry.toString());
+        outPath = FileManager.query(overridePath, entry.getResourceName());
         ((BIFFResourceEntry)entry).setOverride(true);
       } else {
         outPath = entry.getActualPath();
@@ -332,11 +328,9 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
       getHexView().requestFocusInWindow();
     }
   }
+  //</editor-fold>
 
-//--------------------- End Interface ActionListener ---------------------
-
-//--------------------- Begin Interface ChangeListener ---------------------
-
+  //<editor-fold defaultstate="collapsed" desc="ChangeListener">
   @Override
   public void stateChanged(ChangeEvent e)
   {
@@ -355,11 +349,9 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
       }
     }
   }
+  //</editor-fold>
 
-//--------------------- End Interface ChangeListener ---------------------
-
-//--------------------- Begin Interface Closeable ---------------------
-
+  //<editor-fold defaultstate="collapsed" desc="Closeable">
   @Override
   public void close() throws Exception
   {
@@ -381,8 +373,7 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
       findData = null;
     }
   }
-
-//--------------------- End Interface Closeable ---------------------
+  //</editor-fold>
 
   /** Returns the associated resource structure. */
   public AbstractStruct getStruct()
@@ -426,39 +417,16 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
     }
   }
 
-  // initialize controls
+  /** Initialize controls. */
   private void initGui()
   {
     setLayout(new BorderLayout());
 
     // configuring hexview
-    Color textColor = dataProvider.isEditable() ? Color.BLACK: Color.GRAY;
-    hexView.setEnabled(false);
-    hexView.setDefinitionStatus(JHexView.DefinitionStatus.UNDEFINED);
-    hexView.setAddressMode(JHexView.AddressMode.BIT32);
-    hexView.setSeparatorsVisible(false);
-    hexView.setBytesPerColumn(1);
-    hexView.setBytesPerRow(16);
-    hexView.setColumnSpacing(8);
-    hexView.setMouseOverHighlighted(false);
-    hexView.setShowModified(true);
-    hexView.setCaretColor(Color.BLACK);
-    hexView.setFontSize(13);
-    hexView.setHeaderFontStyle(Font.BOLD);
-    hexView.setFontColorHeader(new Color(0x0000c0));
-    hexView.setBackgroundColorOffsetView(hexView.getBackground());
-    hexView.setFontColorOffsetView(new Color(0x0000c0));
-    hexView.setBackgroundColorHexView(hexView.getBackground());
-    hexView.setFontColorHexView1(textColor);
-    hexView.setFontColorHexView2(textColor);
-    hexView.setBackgroundColorAsciiView(hexView.getBackground());
-    hexView.setFontColorAsciiView(textColor);
-    hexView.setFontColorModified(Color.RED);
-    hexView.setSelectionColor(new Color(0xc0c0c0));
+    GenericHexViewer.configureHexView(hexView, dataProvider.isEditable());
+
     hexView.setColormap(colorMap);
-    hexView.setColorMapEnabled(BrowserMenuBar.getInstance().getHexColorMapEnabled());
     hexView.setMenuCreator(menuCreator);
-    hexView.setEnabled(true);
     hexView.addHexListener(this);
     hexView.setData(dataProvider);
     hexView.setDefinitionStatus(hexView.getData().getDataLength() > 0 ?
@@ -514,7 +482,7 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
     return findData;
   }
 
-  // Attempts to find the next match of the search string as defined in the FindData instance, starting at offset.
+  /** Attempts to find the next match of the search string as defined in the FindData instance, starting at offset. */
   private void findPattern(int offset)
   {
     if (getFindData().getDataType() == FindDataDialog.Type.TEXT) {
@@ -547,7 +515,7 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
     sb.append('[');
     if (buffer != null) {
       for (int i = 0; i < buffer.length; i++) {
-        sb.append(String.format("%1$02X", buffer[i] & 0xff));
+        sb.append(String.format("%02X", buffer[i] & 0xff));
         if (i+1 < buffer.length) {
           sb.append(", ");
         }
@@ -588,11 +556,11 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
 
 //-------------------------- INNER CLASSES --------------------------
 
-  // Panel component showing information about the currently selected data.
+  /** Panel component showing information about the currently selected data. */
   private final class InfoPanel extends JPanel
   {
-    private final List<StructEntryTableModel> listModels = new ArrayList<StructEntryTableModel>();
-    private final List<Component> listComponents = new ArrayList<Component>();
+    private final List<StructEntryTableModel> listModels = new ArrayList<>();
+    private final List<Component> listComponents = new ArrayList<>();
 
     private JPanel mainPanel;
     private int offset;
@@ -623,7 +591,7 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
       }
     }
 
-    // Initialize controls
+    /** Initialize controls. */
     private void init()
     {
       setLayout(new GridBagLayout());
@@ -641,7 +609,7 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
       add(new JPanel(), gbc);
     }
 
-    // Updates tables and table models based on the data at the specified offset
+    /** Updates tables and table models based on the data at the specified offset. */
     private void updatePanel(int offset)
     {
       StructuredDataProvider data = (getDataProvider() instanceof StructuredDataProvider) ?
@@ -694,7 +662,7 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
       repaint();
     }
 
-    // Constructs and initializes a new table panel based on the specified model and level information
+    /** Constructs and initializes a new table panel based on the specified model and level information. */
     private Component createInfoTable(TableModel model, int level)
     {
       final String[] suffix = {"th", "st", "nd", "rd", "th"};
@@ -702,7 +670,7 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
       JPanel retVal = new JPanel(new GridBagLayout());
 
       // creating title
-      JLabel l = new JLabel(String.format("%1$d%2$s level structure:",
+      JLabel l = new JLabel(String.format("%d%s level structure:",
                                           level, suffix[Math.max(0, Math.min(level, 4))]));
       l.setFont(l.getFont().deriveFont(Font.BOLD));
       GridBagConstraints gbc = new GridBagConstraints();
@@ -713,7 +681,8 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
       // creating table
       JTable table = new JTable(model);
       table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-      table.setFont(BrowserMenuBar.getInstance().getScriptFont());
+      table.setFont(Misc.getScaledFont(BrowserMenuBar.getInstance().getScriptFont()));
+      table.setRowHeight(table.getFontMetrics(table.getFont()).getHeight() + 1);
       table.setBorder(BorderFactory.createLineBorder(Color.GRAY));
       table.getTableHeader().setBorder(BorderFactory.createLineBorder(Color.GRAY));
       table.getTableHeader().setReorderingAllowed(false);
@@ -721,8 +690,8 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
       table.setFocusable(false);
       table.setEnabled(false);
 
-      final String maxString = String.format("%1$080d", 0);
-      Font f = BrowserMenuBar.getInstance().getScriptFont();
+      final String maxString = String.format("%080d", 0);
+      Font f = Misc.getScaledFont(BrowserMenuBar.getInstance().getScriptFont());
       FontMetrics fm = table.getFontMetrics(f);
       Rectangle2D rect = f.getStringBounds(maxString, fm.getFontRenderContext());
       Dimension d = table.getPreferredSize();
@@ -736,7 +705,7 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
       return retVal;
     }
 
-    // Removes the specified component from the info panel
+    /** Removes the specified component from the info panel. */
     private void removeComponentFromPanel(Component c)
     {
       if (c != null) {
@@ -744,7 +713,7 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
       }
     }
 
-    // Adds the specified component to the info panel
+    /** Adds the specified component to the info panel. */
     private void addComponentToPanel(Component c)
     {
       if (c != null) {
@@ -756,7 +725,7 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
   }
 
 
-  // Manages the representation of a single StructEntry instance
+  /** Manages the representation of a single {@link StructEntry} instance. */
   private class StructEntryTableModel extends AbstractTableModel
   {
     private final String[] names = {"Name", "Start offset", "Length", "Structure type", "Value"};
@@ -804,7 +773,7 @@ public class StructHexViewer extends JPanel implements IHexViewListener, IDataCh
             case 1: // Start offset
               return String.format("%1$Xh (%1$d)", getStruct().getOffset());
             case 2: // Length
-              return String.format("%1$d byte%2$s",
+              return String.format("%d byte%s",
                                    getStruct().getSize(), (getStruct().getSize() != 1) ? "s" : "");
             case 3: // Structure type
               return getTypeDesc(getStruct());

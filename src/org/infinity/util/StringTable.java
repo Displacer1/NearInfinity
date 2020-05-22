@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.util;
@@ -15,6 +15,7 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.HashMap;
 
 import org.infinity.NearInfinity;
 import org.infinity.datatype.DecNumber;
@@ -44,15 +45,31 @@ public class StringTable
   /** Defines available string formats. */
   public enum Format {
     /** String is returned without further modifications. */
-    NONE,
+    NONE("%1$s"),
     /** Strref value is added in front of the returned string. */
-    STRREF_PREFIX,
+    STRREF_PREFIX("(Strref: %2$d) %1$s"),
     /** Strref value is added behind the returned string. */
-    STRREF_SUFFIX,
+    STRREF_SUFFIX("%1$s (Strref: %2$d)"),
     /** Strref value is added in front of the returned string (without additional text). */
-    STRREF_PREFIX_SHORT,
+    STRREF_PREFIX_SHORT("%2$d : %1$s"),
     /** Strref value is added behind the returned string (without additional text). */
-    STRREF_SUFFIX_SHORT,
+    STRREF_SUFFIX_SHORT("%1$s : %2$d");
+
+    /**
+     * Format string for {@link String#format} method. Can have up to 2 arguments:
+     * first - localized text, second - integer, representing StrRef.
+     */
+    final String format;
+
+    private Format(String format)
+    {
+      this.format = format;
+    }
+
+    public String format(String text, int strRef)
+    {
+      return String.format(format, text, strRef);
+    }
   }
 
   /** String entry flag: Text is used if available */
@@ -64,21 +81,14 @@ public class StringTable
   /** The default flags value includes all supported bits */
   public static final short FLAGS_DEFAULT   = 0x07;
 
+  /** Strref start index for virtual strings referenced by ENGINEST.2DA (EE only) */
+  public static final int STRREF_VIRTUAL = 0xf00000;
+
   private static final EnumMap<Type, StringTable> TLK_TABLE = new EnumMap<>(Type.class);
-  private static final EnumMap<Format, String> FORMAT = new EnumMap<>(Format.class);
 
   private static Charset charset = null;
   private static Format format = Format.NONE;
   private static Boolean hasFemaleTable = null;
-
-  static {
-    FORMAT.put(Format.NONE, "%1$s");
-    FORMAT.put(Format.STRREF_PREFIX, "(Strref: %2$d) %1$s");
-    FORMAT.put(Format.STRREF_SUFFIX, "%1$s (Strref: %2$d)");
-    FORMAT.put(Format.STRREF_PREFIX_SHORT, "%2$d : %1$s");
-    FORMAT.put(Format.STRREF_SUFFIX_SHORT, "%1$s : %2$d");
-  }
-
 
   /**
    * Returns whether the current language provides a separate string table for female text.
@@ -254,6 +264,16 @@ public class StringTable
     return instance(type)._getLanguageId();
   }
 
+  /**
+   * Returns whether the specified string reference points to a valid string entry.
+   * @param index The string reference to check.
+   * @return {@code true} if valid, {@code false} otherwise.
+   */
+  public static boolean isValidStringRef(int index)
+  {
+    return (getStringEntry(Type.MALE, index) != StringEntry.INVALID);
+  }
+
   /** Returns number of string entries in male string table. */
   public static int getNumEntries()
   {
@@ -305,6 +325,18 @@ public class StringTable
   public static String getStringRef(Type type, int index, Format fmt) throws IndexOutOfBoundsException
   {
     return instance(type)._getStringRef(index, fmt);
+  }
+
+  /**
+   * Translates virtual string references into real string references.
+   * Returns <pre>index</pre> as is, otherwise.
+   */
+  public static int getTranslatedIndex(int index)
+  {
+    if (index >= STRREF_VIRTUAL) {
+      index = instance(Type.MALE)._getTranslatedIndex(index);
+    }
+    return index;
   }
 
   /**
@@ -939,17 +971,8 @@ public class StringTable
     return retVal;
   }
 
-  // Returns the specified format string that can be used by String.format() and similar methods
-  private static String getFormatString(Format format)
-  {
-    if (format == null) {
-      format = StringTable.format;
-    }
-    return FORMAT.get(format);
-  }
-
-
   private final ArrayList<StringEntry> entries = new ArrayList<>();
+  private final HashMap<Integer, Integer> entriesVirtual = new HashMap<>();
   private final Path tlkPath;
   private final StringTable.Type tlkType;
 
@@ -994,60 +1017,84 @@ public class StringTable
     return entries.size();
   }
 
+  private int _getTranslatedIndex(int index)
+  {
+    if (Profile.isEnhancedEdition() && index >= STRREF_VIRTUAL) {
+      if (entriesVirtual.containsKey(Integer.valueOf(index))) {
+        index = entriesVirtual.get(Integer.valueOf(index)).intValue();
+      } else {
+        final Table2da engineTable = Table2daCache.get("ENGINEST.2DA");
+        int row = index - STRREF_VIRTUAL;
+        if (engineTable != null && row < engineTable.getRowCount()) {
+          try {
+            int strref = Integer.parseInt(engineTable.get(row, 1));
+            entriesVirtual.put(Integer.valueOf(index), Integer.valueOf(strref));
+            index = strref;
+          } catch (NumberFormatException e) {
+            e.printStackTrace();
+          }
+        }
+      }
+    }
+    return index;
+  }
+
   private String _getStringRef(int index, Format fmt) throws IndexOutOfBoundsException
   {
+    index = _getTranslatedIndex(index);
     StringEntry entry = _getEntry(index);
-    return String.format(getFormatString(fmt), entry.getText(), index);
+    return (fmt == null ? format : fmt).format(entry.getText(), index);
   }
 
   private void _setStringRef(int index, String text) throws IndexOutOfBoundsException
   {
-    _getEntry(index).setText(text);
+    _getEntry(_getTranslatedIndex(index)).setText(text);
   }
 
   private String _getSoundResource(int index) throws IndexOutOfBoundsException
   {
-    return _getEntry(index).getSoundRef();
+    return _getEntry(_getTranslatedIndex(index)).getSoundRef();
   }
 
   private void _setSoundResource(int index, String resRef) throws IndexOutOfBoundsException
   {
-    _getEntry(index).setSoundRef(resRef);
+    _getEntry(_getTranslatedIndex(index)).setSoundRef(resRef);
   }
 
   private short _getFlags(int index) throws IndexOutOfBoundsException
   {
-    return _getEntry(index).getFlags();
+    return _getEntry(_getTranslatedIndex(index)).getFlags();
   }
 
   private void _setFlags(int index, short value) throws IndexOutOfBoundsException
   {
-    _getEntry(index).setFlags(value);
+    _getEntry(_getTranslatedIndex(index)).setFlags(value);
   }
 
   private int _getVolume(int index) throws IndexOutOfBoundsException
   {
-    return _getEntry(index).getVolume();
+    return _getEntry(_getTranslatedIndex(index)).getVolume();
   }
 
   private void _setVolume(int index, int value) throws IndexOutOfBoundsException
   {
-    _getEntry(index).setVolume(value);
+    _getEntry(_getTranslatedIndex(index)).setVolume(value);
   }
 
   private int _getPitch(int index) throws IndexOutOfBoundsException
   {
-    return _getEntry(index).getPitch();
+    return _getEntry(_getTranslatedIndex(index)).getPitch();
   }
 
   private void _setPitch(int index, int value) throws IndexOutOfBoundsException
   {
-    _getEntry(index).setPitch(value);
+    _getEntry(_getTranslatedIndex(index)).setPitch(value);
   }
 
   // Always returns a non-null StringEntry instance
   private StringEntry _getEntry(int index) throws IndexOutOfBoundsException
   {
+    index = _getTranslatedIndex(index);
     _ensureIndexIsLoaded(index);
     StringEntry entry;
     if (index >= 0 && index < entries.size()) {
@@ -1140,6 +1187,9 @@ public class StringTable
         try {
           ch.position(ofsString);
           text = StreamUtils.readString(ch, lenString, getCharset());
+          if (!CharsetDetector.getLookup().isExcluded(index)) {
+            text = CharsetDetector.getLookup().decodeString(text);
+          }
         } catch (IllegalArgumentException e) {
           System.err.println("Error: Illegal offset " + ofsString + " for string entry " + index);
           text = "";
@@ -1216,6 +1266,7 @@ public class StringTable
   // Makes sure the specified string entry is loaded into memory
   private void _ensureIndexIsLoaded(int index)
   {
+    index = _getTranslatedIndex(index);
     if (entriesPending > 0 && index >= 0 && index < _getNumEntries() && entries.get(index) == null) {
       synchronized (entries) {
         try (FileChannel ch = _open()) {
@@ -1328,8 +1379,17 @@ public class StringTable
         ArrayList<byte[]> stringList = new ArrayList<>(numEntries);
         buffer = StreamUtils.getByteBuffer(entrySize);
         int curStringOfs = 0;
-        for (final StringEntry entry: entries) {
-          byte[] data = entry.getTextBytes();
+        CharsetDetector.CharLookup lookup = CharsetDetector.getLookup();
+        for (int idx = 0, count = entries.size(); idx < count; idx++) {
+          final StringEntry entry = entries.get(idx);
+          // apply character encoding if required
+          String text;
+          if (lookup.isExcluded(idx)) {
+            text = entry.getText();
+          } else {
+            text = lookup.encodeString(entry.getText());
+          }
+          byte[] data = entry.getTextBytes(text);
           byte[] soundRef = entry.getSoundRefBytes();
           buffer.position(0);
           buffer.putShort(entry.getFlags());
@@ -1521,7 +1581,7 @@ public class StringTable
         newText = "";
       }
 
-      if (!newText.equals(text)) {
+      if (!normalizedText(newText).equals(normalizedText(text))) {
         text = newText;
         setModified();
       }
@@ -1545,16 +1605,32 @@ public class StringTable
       modified = false;
     }
 
-    private byte[] getSoundRefBytes()
+    public byte[] getSoundRefBytes()
     {
       byte[] retVal = new byte[8];
       System.arraycopy(soundRef.getBytes(Misc.CHARSET_DEFAULT), 0, retVal, 0, soundRef.length());
       return retVal;
     }
 
-    private byte[] getTextBytes()
+    public byte[] getTextBytes()
     {
       return text.getBytes(StringTable.getCharset());
+    }
+
+    public byte[] getTextBytes(String text)
+    {
+      return text.getBytes(StringTable.getCharset());
+    }
+
+    // Newline conversion should not affect string comparison
+    public String normalizedText(String text)
+    {
+      StringBuilder sb = new StringBuilder(text);
+      int idx;
+      while ((idx = sb.indexOf("\r")) >= 0) {
+        sb.deleteCharAt(idx);
+      }
+      return sb.toString();
     }
 
     @Override
@@ -1578,7 +1654,7 @@ public class StringTable
 
     public void clearList()
     {
-      if (getFieldCount() > 0) {
+      if (!getFields().isEmpty()) {
         clearFields();
       }
     }
@@ -1586,7 +1662,7 @@ public class StringTable
     public void fillList(int index)
     {
       try {
-        if (getFieldCount() == 0) {
+        if (getFields().isEmpty()) {
           ByteBuffer buffer = StreamUtils.getByteBuffer(26);
           buffer.position(0);
           buffer.putShort(flags);

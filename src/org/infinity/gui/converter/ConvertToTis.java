@@ -107,7 +107,7 @@ public class ConvertToTis extends ChildFrame
         img.getHeight() <= 0 || ((img.getHeight() % 64) != 0)) {
       result.add(null);
       result.add("The dimensions of the source image have to be a multiple of 64 pixels.\n" +
-                 String.format("Current dimensions are %1$dx%2$d", img.getWidth(), img.getHeight()));
+                 String.format("Current dimensions are %dx%d", img.getWidth(), img.getHeight()));
       return false;
     }
     if (tisFileName == null || tisFileName.isEmpty()) {
@@ -136,13 +136,12 @@ public class ConvertToTis extends ChildFrame
 
     int[] srcBlock = new int[64*64];      // temp. storage for a single tile
     int[] palette = new int[255];         // temp. storage for generated palette
-    int[] hclPalette = new int[255];      // needed for finding nearest color
     byte[] tilePalette = new byte[1024];  // final palette for output
     byte[] tileData = new byte[64*64];    // final tile data for output
     int tw = img.getWidth() / 64;         // tiles per row
 
     try {
-      String note = "Converting tile %1$d / %2$d";
+      String note = "Converting tile %d / %d";
       int progressIndex = 0, progressMax = tileCount;
       if (showProgress) {
         progress = new ProgressMonitor(parent, "Converting TIS...", String.format(note, 0, tileCount),
@@ -179,8 +178,7 @@ public class ConvertToTis extends ChildFrame
         }
 
         // reducing colors
-        if (ColorConvert.medianCut(srcBlock, 255, palette, false)) {
-          ColorConvert.toHclPalette(palette, hclPalette);
+        if (ColorConvert.medianCut(srcBlock, 255, palette, true)) {
 
           // filling palette and color cache, index 0 denotes transparency
           tilePalette[0] = tilePalette[2] = tilePalette[3] = 0; tilePalette[1] = (byte)255;
@@ -201,7 +199,7 @@ public class ConvertToTis extends ChildFrame
               if (palIndex != null) {
                 tileData[i] = (byte)(palIndex + 1);
               } else {
-                byte color = (byte)ColorConvert.nearestColor(srcBlock[i], hclPalette);
+                byte color = (byte)ColorConvert.nearestColorRGB(srcBlock[i], palette, true);
                 tileData[i] = (byte)(color + 1);
                 colorCache.put(srcBlock[i], color);
               }
@@ -210,7 +208,7 @@ public class ConvertToTis extends ChildFrame
         } else {
           // error handling
           result.add(null);
-          result.add(String.format("Error processing tile #%1$d. Conversion cancelled.", tileIdx));
+          result.add(String.format("Error processing tile #%d. Conversion cancelled.", tileIdx));
           return false;
         }
 
@@ -274,7 +272,7 @@ public class ConvertToTis extends ChildFrame
         img.getHeight() <= 0 || ((img.getHeight() % 64) != 0)) {
       result.add(null);
       result.add("The dimensions of the source image have to be a multiple of 64 pixels.\n" +
-                 String.format("Current dimensions are %1$dx%2$d", img.getWidth(), img.getHeight()));
+                 String.format("Current dimensions are %dx%d", img.getWidth(), img.getHeight()));
       return false;
     }
     if (tisFileName == null || tisFileName.isEmpty()) {
@@ -469,7 +467,7 @@ public class ConvertToTis extends ChildFrame
       tisNameBase = tisNameBase.substring(0, tisNameBase.lastIndexOf('.'));
     }
     if (Pattern.matches(".{2,7}", tisNameBase)) {
-      String pvrzName = String.format("%1$s%2$s%3$02d.PVRZ", tisNameBase.substring(0, 1),
+      String pvrzName = String.format("%s%s%02d.PVRZ", tisNameBase.substring(0, 1),
                                       tisNameBase.substring(2, tisNameBase.length()), page);
       if (tisPath != null) {
         return tisPath.resolve(pvrzName).toString();
@@ -488,7 +486,7 @@ public class ConvertToTis extends ChildFrame
   {
     int dxtCode = (dxtType == DxtEncoder.DxtType.DXT5) ? 11 : 7;
     byte[] output = new byte[DxtEncoder.calcImageSize(1024, 1024, dxtType)];
-    String note = "Generating PVRZ file %1$s / %2$s";
+    String note = "Generating PVRZ file %s / %s";
     if (progress != null) {
       progress.setMinimum(0);
       progress.setMaximum(pages.size() + 1);
@@ -547,14 +545,14 @@ public class ConvertToTis extends ChildFrame
           // critical error
           e.printStackTrace();
           result.add(null);
-          result.add(String.format("Error writing PVRZ file \"%1$s\" to disk.", pvrzName));
+          result.add(String.format("Error writing PVRZ file \"%s\" to disk.", pvrzName));
           return false;
         }
         pvrz = null;
       } catch (Exception e) {
         e.printStackTrace();
         result.add(null);
-        result.add(String.format("Error while generating PVRZ files:\n%1$s", e.getMessage()));
+        result.add(String.format("Error while generating PVRZ files:\n%s", e.getMessage()));
         return false;
       }
     }
@@ -1076,7 +1074,7 @@ public class ConvertToTis extends ChildFrame
     Path inFile = FileManager.resolve(inFileName);
     if (!Files.isRegularFile(inFile)) {
       ret.add(null);
-      ret.add(String.format("Input file \"%1$s\" does not exist.", inFileName));
+      ret.add(String.format("Input file \"%s\" does not exist.", inFileName));
       return ret;
     }
 

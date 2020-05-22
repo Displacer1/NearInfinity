@@ -1,5 +1,5 @@
 // Near Infinity - An Infinity Engine Browser and Editor
-// Copyright (C) 2001 - 2005 Jon Olav Hauglid
+// Copyright (C) 2001 - 2019 Jon Olav Hauglid
 // See LICENSE.txt for license information
 
 package org.infinity.resource.pro;
@@ -10,11 +10,12 @@ import javax.swing.JComponent;
 
 import org.infinity.datatype.Bitmap;
 import org.infinity.datatype.ColorPicker;
-import org.infinity.datatype.Datatype;
 import org.infinity.datatype.DecNumber;
 import org.infinity.datatype.Flag;
 import org.infinity.datatype.HashBitmap;
 import org.infinity.datatype.IdsTargetType;
+import org.infinity.datatype.ProRef;
+import org.infinity.datatype.ResourceBitmap;
 import org.infinity.datatype.ResourceRef;
 import org.infinity.datatype.SpellProtType;
 import org.infinity.datatype.StringRef;
@@ -31,11 +32,25 @@ import org.infinity.resource.HasAddRemovable;
 import org.infinity.resource.HasViewerTabs;
 import org.infinity.resource.Profile;
 import org.infinity.resource.Resource;
+import org.infinity.resource.ResourceFactory;
 import org.infinity.resource.StructEntry;
 import org.infinity.resource.key.ResourceEntry;
 import org.infinity.search.SearchOptions;
 import org.infinity.util.LongIntegerHashMap;
 
+/**
+ * This resource describes projectiles, and the files are referenced spells and
+ * projectile weapons. Projectile files can control:
+ * <ul>
+ * <li>Projectile graphics</li>
+ * <li>Projectile speed</li>
+ * <li>Projectile area of effect</li>
+ * <li>Projectile sound</li>
+ * </ul>
+ *
+ * @see <a href="https://gibberlings3.github.io/iesdp/file_formats/ie_formats/pro_v1.htm">
+ * https://gibberlings3.github.io/iesdp/file_formats/ie_formats/pro_v1.htm</a>
+ */
 public final class ProResource extends AbstractStruct implements Resource, HasAddRemovable, HasViewerTabs, UpdateListener
 {
   // PRO-specific field labels
@@ -55,6 +70,14 @@ public final class ProResource extends AbstractStruct implements Resource, HasAd
   public static final String PRO_CREATURE_TYPE = "Creature type";
   public static final String PRO_SPELL_DEFAULT = "Default spell";
   public static final String PRO_SPELL_SUCCESS = "Success spell";
+  public static final String PRO_SPELL_ANGLE_MIN = "Angle increase minimum";
+  public static final String PRO_SPELL_ANGLE_MAX = "Angle increase maximum";
+  public static final String PRO_SPELL_CURVE_MIN = "Curve minimum";
+  public static final String PRO_SPELL_CURVE_MAX = "Curve maximum";
+  public static final String PRO_SPELL_THAC0_BONUS = "THAC0 bonus";
+  public static final String PRO_SPELL_THAC0_BONUS_2 = "THAC0 bonus (non-actor)";
+  public static final String PRO_SPELL_RADIUS_MIN = "Radius minimum";
+  public static final String PRO_SPELL_RADIUS_MAX = "Radius maximum";
 
   public static final String[] s_color = {"", "Black", "Blue", "Chromatic", "Gold",
                                            "Green", "Purple", "Red", "White", "Ice",
@@ -62,7 +85,8 @@ public final class ProResource extends AbstractStruct implements Resource, HasAd
   public static final String[] s_behave = {"No flags set", "Show sparks", "Use height",
                                             "Loop fire sound", "Loop impact sound", "Ignore center",
                                             "Draw as background",
-                                            "EE: Allow saving;Allows you to save the game while the projectile is still active."};
+                                            "EE: Allow saving;Allows you to save the game while the projectile is still active.",
+                                            "EE: Loop spread animation"};
   public static final String[] s_flagsEx = {
     "No flags set", "Bounce from walls", "Pass target", "Draw center VVC once", "Hit immediately",
     "Face target", "Curved path", "Start random frame", "Pillar", "Semi-trans. trail puff VEF",
@@ -81,13 +105,33 @@ public final class ProResource extends AbstractStruct implements Resource, HasAd
 
   private StructHexViewer hexViewer;
 
+  /** Returns associated projectile description based on MISSILE.IDS or PROJECTL.IDS entries. */
+  public static String getSearchString(ResourceEntry entry)
+  {
+    String retVal = null;
+    if (entry != null) {
+      ResourceBitmap.RefEntry re = ProRef.createRefList(ResourceFactory.resourceExists("MISSILE.IDS"))
+                                  .stream()
+                                  .filter(e -> entry.getResourceName().equalsIgnoreCase(e.getResourceName()))
+                                  .findFirst()
+                                  .orElse(null);
+      if (re != null &&
+          !entry.getResourceRef().equalsIgnoreCase(re.getSearchString()) &&
+          !"unnamed".equalsIgnoreCase(re.getSearchString())) {
+        retVal = re.getSearchString();
+        if (retVal != null)
+          retVal = retVal.replace('_', ' ');  // "beautify" search string
+      }
+    }
+    return retVal;
+  }
+
   public ProResource(ResourceEntry entry) throws Exception
   {
     super(entry);
   }
 
-//--------------------- Begin Interface HasAddRemovable ---------------------
-
+  //<editor-fold defaultstate="collapsed" desc="HasAddRemovable">
   @Override
   public AddRemovable[] getAddRemovables() throws Exception
   {
@@ -105,11 +149,9 @@ public final class ProResource extends AbstractStruct implements Resource, HasAd
   {
     return true;
   }
+  //</editor-fold>
 
-//--------------------- End Interface HasAddRemovable ---------------------
-
-//--------------------- Begin Interface UpdateListener ---------------------
-
+  //<editor-fold defaultstate="collapsed" desc="UpdateListener">
   @Override
   public boolean valueUpdated(UpdateEvent event)
   {
@@ -134,36 +176,36 @@ public final class ProResource extends AbstractStruct implements Resource, HasAd
       // add/remove extended sections in the parent structure depending on the current value
       if (struct instanceof Resource && struct instanceof HasAddRemovable) {
         if (proType.getValue() == 3L) {         // area of effect
-          StructEntry entry = struct.getList().get(struct.getList().size() - 1);
+          StructEntry entry = struct.getFields().get(struct.getFields().size() - 1);
           try {
             if (!(entry instanceof ProSingleType) && !(entry instanceof ProAreaType))
-              struct.addDatatype(new ProSingleType(), struct.getList().size());
-            entry = struct.getList().get(struct.getList().size() - 1);
+              struct.addDatatype(new ProSingleType(), struct.getFields().size());
+            entry = struct.getFields().get(struct.getFields().size() - 1);
             if (!(entry instanceof ProAreaType))
-              struct.addDatatype(new ProAreaType(), struct.getList().size());
+              struct.addDatatype(new ProAreaType(), struct.getFields().size());
           } catch (Exception e) {
             e.printStackTrace();
             return false;
           }
         } else if (proType.getValue() == 2L) {  // single target
-          StructEntry entry = struct.getList().get(struct.getList().size() - 1);
+          StructEntry entry = struct.getFields().get(struct.getFields().size() - 1);
           if (entry instanceof ProAreaType)
             struct.removeDatatype((AddRemovable)entry, false);
-          entry = struct.getList().get(struct.getList().size() - 1);
+          entry = struct.getFields().get(struct.getFields().size() - 1);
           if (!(entry instanceof ProSingleType)) {
             try {
-              struct.addDatatype(new ProSingleType(), struct.getList().size());
+              struct.addDatatype(new ProSingleType(), struct.getFields().size());
             } catch (Exception e) {
               e.printStackTrace();
               return false;
             }
           }
         } else if (proType.getValue() == 1L) {  // no bam
-          if (struct.getList().size() > 2) {
-            StructEntry entry = struct.getList().get(struct.getList().size() - 1);
+          if (struct.getFields().size() > 2) {
+            StructEntry entry = struct.getFields().get(struct.getFields().size() - 1);
             if (entry instanceof ProAreaType)
               struct.removeDatatype((AddRemovable)entry, false);
-            entry = struct.getList().get(struct.getList().size() - 1);
+            entry = struct.getFields().get(struct.getFields().size() - 1);
             if (entry instanceof ProSingleType)
               struct.removeDatatype((AddRemovable)entry, false);
           }
@@ -175,11 +217,9 @@ public final class ProResource extends AbstractStruct implements Resource, HasAd
     }
     return false;
   }
+  //</editor-fold>
 
-//--------------------- End Interface UpdateListener ---------------------
-
-//--------------------- Begin Interface HasViewerTabs ---------------------
-
+  //<editor-fold defaultstate="collapsed" desc="HasViewerTabs">
   @Override
   public int getViewerTabCount()
   {
@@ -209,14 +249,13 @@ public final class ProResource extends AbstractStruct implements Resource, HasAd
   {
     return false;
   }
+  //</editor-fold>
 
-//--------------------- End Interface HasViewerTabs ---------------------
-
+  //<editor-fold defaultstate="collapsed" desc="Readable">
   @Override
   public int read(ByteBuffer buffer, int offset) throws Exception
   {
-    final String[] s_types = Profile.isEnhancedEdition() ? new String[]{"VVC", "BAM"}
-                                                         : new String[]{"VEF", "VVC", "BAM"};
+    final String[] s_types = new String[]{"VEF", "VVC", "BAM"};
 
     addField(new TextString(buffer, offset, 4, COMMON_SIGNATURE));
     addField(new TextString(buffer, offset + 4, 4, COMMON_VERSION));
@@ -237,42 +276,33 @@ public final class ProResource extends AbstractStruct implements Resource, HasAd
       addField(new ColorPicker(buffer, offset + 52, PRO_COLOR, ColorPicker.Format.BGRX));
       addField(new DecNumber(buffer, offset + 56, 2, PRO_COLOR_SPEED));
       addField(new DecNumber(buffer, offset + 58, 2, PRO_SCREEN_SHAKE_AMOUNT));
-      if (Profile.isEnhancedEdition()) {
-        flag.addUpdateListener(this);
-        if (flag.isFlagSet(30)) {
-          SpellProtType type = new SpellProtType(buffer, offset + 62, 2, PRO_CREATURE_TYPE, 1);
-          addField(type.createCreatureValueFromType(buffer, offset + 60));
-          addField(type);
-          type = new SpellProtType(buffer, offset + 66, 2, PRO_CREATURE_TYPE, 2);
-          addField(type.createCreatureValueFromType(buffer, offset + 64));
-          addField(type);
-        } else {
-          IdsTargetType type = new IdsTargetType(buffer, offset + 62, 2, null, 1, null, false);
-          addField(type.createIdsValueFromType(buffer));
-          addField(type);
-          type = new IdsTargetType(buffer, offset + 66, 2, null, 2, null, false);
-          addField(type.createIdsValueFromType(buffer));
-          addField(type);
-        }
+      flag.addUpdateListener(this);
+      if (flag.isFlagSet(30)) {
+        SpellProtType type = new SpellProtType(buffer, offset + 62, 2, PRO_CREATURE_TYPE, 1);
+        addField(type.createCreatureValueFromType(buffer, offset + 60));
+        addField(type);
+        type = new SpellProtType(buffer, offset + 66, 2, PRO_CREATURE_TYPE, 2);
+        addField(type.createCreatureValueFromType(buffer, offset + 64));
+        addField(type);
       } else {
         IdsTargetType type = new IdsTargetType(buffer, offset + 62, 2, null, 1, null, false);
         addField(type.createIdsValueFromType(buffer));
         addField(type);
-        type = new IdsTargetType(buffer, offset + 62, 2, null, 2, null, false);
+        type = new IdsTargetType(buffer, offset + 66, 2, null, 2, null, false);
         addField(type.createIdsValueFromType(buffer));
         addField(type);
       }
       addField(new ResourceRef(buffer, 68, PRO_SPELL_DEFAULT, "SPL"));
       addField(new ResourceRef(buffer, 76, PRO_SPELL_SUCCESS, "SPL"));
       if (Profile.getGame() == Profile.Game.PSTEE) {
-        addField(new DecNumber(buffer, 84, 2, "Angle increase minimum"));
-        addField(new DecNumber(buffer, 86, 2, "Angle increase maximum"));
-        addField(new DecNumber(buffer, 88, 2, "Curve minimum"));
-        addField(new DecNumber(buffer, 90, 2, "Curve maximum"));
-        addField(new DecNumber(buffer, 92, 2, "THAC0 bonus"));
-        addField(new DecNumber(buffer, 94, 2, "THAC0 bonus (non-actor)"));
-        addField(new DecNumber(buffer, 96, 2, "Radium minimum"));
-        addField(new DecNumber(buffer, 98, 2, "Radium maximum"));
+        addField(new DecNumber(buffer, 84, 2, PRO_SPELL_ANGLE_MIN));
+        addField(new DecNumber(buffer, 86, 2, PRO_SPELL_ANGLE_MAX));
+        addField(new DecNumber(buffer, 88, 2, PRO_SPELL_CURVE_MIN));
+        addField(new DecNumber(buffer, 90, 2, PRO_SPELL_CURVE_MAX));
+        addField(new DecNumber(buffer, 92, 2, PRO_SPELL_THAC0_BONUS));
+        addField(new DecNumber(buffer, 94, 2, PRO_SPELL_THAC0_BONUS_2));
+        addField(new DecNumber(buffer, 96, 2, PRO_SPELL_RADIUS_MIN));
+        addField(new DecNumber(buffer, 98, 2, PRO_SPELL_RADIUS_MAX));
         addField(new Unknown(buffer, offset + 100, 156));
       } else {
         addField(new Unknown(buffer, offset + 84, 172));
@@ -295,7 +325,9 @@ public final class ProResource extends AbstractStruct implements Resource, HasAd
 
     return offset;
   }
+  //</editor-fold>
 
+  //<editor-fold defaultstate="collapsed" desc="AbstractStruct">
   @Override
   protected void viewerInitialized(StructViewer viewer)
   {
@@ -335,53 +367,56 @@ public final class ProResource extends AbstractStruct implements Resource, HasAd
       hexViewer.dataModified();
     }
   }
+  //</editor-fold>
 
-  // Updates current IDS targeting to IWD style and returns true if changes have been made
+  /** Updates current IDS targeting to IWD style and returns true if changes have been made. */
   private boolean setIwdStyleIdsType(AbstractStruct struct, int offset, int nr)
   {
     if (struct != null && offset >= 0) {
       StructEntry e1 = struct.getAttribute(offset, false);
       StructEntry e2 = struct.getAttribute(offset + 2, false);
       if (!(e2 instanceof SpellProtType)) {
-        ByteBuffer typeBuffer = ((Datatype)e2).getDataBuffer();
-        SpellProtType newType = new SpellProtType(typeBuffer, 0, 2, null, nr);
+        final ByteBuffer typeBuffer = e2.getDataBuffer();
+        final SpellProtType newType = new SpellProtType(typeBuffer, 0, 2, null, nr);
         newType.setOffset(offset + 2);
-        ByteBuffer valueBuffer = ((Datatype)e1).getDataBuffer();
-        StructEntry newValue = newType.createCreatureValueFromType(valueBuffer, 0);
+        final ByteBuffer valueBuffer = e1.getDataBuffer();
+        final StructEntry newValue = newType.createCreatureValueFromType(valueBuffer, 0);
         newValue.setOffset(offset);
 
-        replaceEntry(newValue);
-        replaceEntry(newType);
+        replaceField(newValue);
+        replaceField(newType);
         return true;
       }
     }
     return false;
   }
 
-  // Updates current IDS targeting to old BG style and returns true if changes have been made
+  /** Updates current IDS targeting to old BG style and returns true if changes have been made. */
   private boolean setOldStyleIdsType(AbstractStruct struct, int offset, int nr)
   {
     if (struct != null && offset >= 0) {
       StructEntry e1 = struct.getAttribute(offset, false);
       StructEntry e2 = struct.getAttribute(offset + 2, false);
       if (!(e2 instanceof IdsTargetType)) {
-        ByteBuffer typeBuffer = ((Datatype)e2).getDataBuffer();
-        IdsTargetType newType = new IdsTargetType(typeBuffer, 0, 2, null, nr, null, false);
+        final ByteBuffer typeBuffer = e2.getDataBuffer();
+        final IdsTargetType newType = new IdsTargetType(typeBuffer, 0, 2, null, nr, null, false);
         newType.setOffset(offset + 2);
-        ByteBuffer valueBuffer = ((Datatype)e1).getDataBuffer();
-        StructEntry newValue = newType.createIdsValueFromType(valueBuffer, 0);
+        final ByteBuffer valueBuffer = e1.getDataBuffer();
+        final StructEntry newValue = newType.createIdsValueFromType(valueBuffer, 0);
         newValue.setOffset(offset);
 
-        replaceEntry(newValue);
-        replaceEntry(newType);
+        replaceField(newValue);
+        replaceField(newType);
         return true;
       }
     }
     return false;
   }
 
-  // Called by "Extended Search"
-  // Checks whether the specified resource entry matches all available search options.
+  /**
+   * Checks whether the specified resource entry matches all available search options.
+   * Called by "Extended Search"
+   */
   public static boolean matchSearchOptions(ResourceEntry entry, SearchOptions searchOptions)
   {
     if (entry != null && searchOptions != null) {
